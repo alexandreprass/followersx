@@ -23,8 +23,15 @@ export default async function handler(req, res) {
       clientSecret: process.env.TWITTER_CLIENT_SECRET,
     });
 
+    // Remover barra final da URL se existir
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
+
     const { client: loggedClient, accessToken, refreshToken } = 
-      await client.loginWithOAuth2({ code, codeVerifier, redirectUri: `${process.env.NEXT_PUBLIC_APP_URL}/api/callback` });
+      await client.loginWithOAuth2({ 
+        code, 
+        codeVerifier, 
+        redirectUri: `${baseUrl}/api/callback` 
+      });
 
     // Buscar informações do usuário
     const { data: userObject } = await loggedClient.v2.me({
@@ -35,7 +42,7 @@ export default async function handler(req, res) {
     res.setHeader('Set-Cookie', [
       `twitter_access_token=${accessToken}; HttpOnly; Path=/; Max-Age=7200`,
       `twitter_refresh_token=${refreshToken}; HttpOnly; Path=/; Max-Age=2592000`,
-      `twitter_user=${JSON.stringify(userObject)}; Path=/; Max-Age=7200`
+      `twitter_user=${encodeURIComponent(JSON.stringify(userObject))}; Path=/; Max-Age=7200`
     ]);
 
     // Redirecionar para a página principal
