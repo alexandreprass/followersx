@@ -16,10 +16,21 @@ export default function Home() {
   }, []);
 
   const loadUserData = async () => {
-    const userData = localStorage.getItem('twitter_user');
-    if (userData) {
-      setUser(JSON.parse(userData));
-      loadStoredData();
+    // Verificar se há dados do usuário nos cookies
+    const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+      const [key, value] = cookie.trim().split('=');
+      acc[key] = value;
+      return acc;
+    }, {});
+
+    if (cookies.twitter_user) {
+      try {
+        const userData = JSON.parse(decodeURIComponent(cookies.twitter_user));
+        setUser(userData);
+        loadStoredData();
+      } catch (error) {
+        console.error('Erro ao carregar usuário:', error);
+      }
     }
   };
 
@@ -36,20 +47,23 @@ export default function Home() {
   };
 
   const handleLogin = async () => {
-    // Simulação de login - você precisará implementar OAuth real
-    const mockUser = {
-      id: '1234567890',
-      username: 'usuario_teste',
-      name: 'Usuário Teste',
-      followers_count: 1000,
-      following_count: 500
-    };
-    
-    localStorage.setItem('twitter_user', JSON.stringify(mockUser));
-    setUser(mockUser);
-    
-    // Simular carregamento inicial de seguidores
-    await fetchFollowers();
+    setLoading(true);
+    try {
+      // Buscar URL de autenticação OAuth
+      const response = await fetch('/api/auth');
+      const data = await response.json();
+      
+      if (data.url) {
+        // Redirecionar para autenticação do Twitter
+        window.location.href = data.url;
+      } else {
+        alert('Erro ao iniciar autenticação. Tente novamente.');
+      }
+    } catch (error) {
+      console.error('Erro no login:', error);
+      alert('Erro ao conectar com Twitter. Verifique as configurações.');
+    }
+    setLoading(false);
   };
 
   const fetchFollowers = async () => {
@@ -222,8 +236,14 @@ export default function Home() {
           <div className="user-info">
             <span>@{user.username}</span>
             <button onClick={() => {
+              // Limpar cookies
+              document.cookie = 'twitter_access_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+              document.cookie = 'twitter_refresh_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+              document.cookie = 'twitter_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+              // Limpar localStorage
               localStorage.clear();
               setUser(null);
+              window.location.href = '/';
             }} className="btn-logout">Sair</button>
           </div>
         </div>
