@@ -8,9 +8,10 @@ const client = new TwitterApi({
 export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
+      // Scopes compatíveis com plano FREE do Twitter API
       const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
         `${process.env.NEXT_PUBLIC_APP_URL}/api/callback`,
-        { scope: ['tweet.read', 'users.read', 'follows.read', 'follows.write', 'offline.access'] }
+        { scope: ['tweet.read', 'users.read', 'offline.access'] }
       );
 
       // Armazene codeVerifier e state em sessão ou cookie
