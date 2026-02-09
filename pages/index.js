@@ -16,21 +16,35 @@ export default function Home() {
   }, []);
 
   const loadUserData = async () => {
-    // Verificar se há dados do usuário nos cookies
-    const cookies = document.cookie.split(';').reduce((acc, cookie) => {
-      const [key, value] = cookie.trim().split('=');
-      acc[key] = value;
-      return acc;
-    }, {});
+    try {
+      // Verificar se há dados do usuário nos cookies
+      const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+        const [key, value] = cookie.trim().split('=');
+        if (key && value) {
+          acc[key] = value;
+        }
+        return acc;
+      }, {});
 
-    if (cookies.twitter_user) {
-      try {
-        const userData = JSON.parse(decodeURIComponent(cookies.twitter_user));
-        setUser(userData);
-        loadStoredData();
-      } catch (error) {
-        console.error('Erro ao carregar usuário:', error);
+      if (cookies.twitter_user) {
+        try {
+          const decodedUser = decodeURIComponent(cookies.twitter_user);
+          const userData = JSON.parse(decodedUser);
+          
+          // Adicionar contadores se não existirem
+          if (!userData.followers_count) userData.followers_count = 0;
+          if (!userData.following_count) userData.following_count = 0;
+          
+          setUser(userData);
+          loadStoredData();
+        } catch (error) {
+          console.error('Erro ao parsear usuário:', error);
+          // Limpar cookie corrompido
+          document.cookie = 'twitter_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+        }
       }
+    } catch (error) {
+      console.error('Erro ao carregar dados do usuário:', error);
     }
   };
 
