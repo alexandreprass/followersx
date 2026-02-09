@@ -8,9 +8,12 @@ const client = new TwitterApi({
 export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
+      // Remover barra final da URL se existir para evitar //
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
+      
       // Scopes compatíveis com plano FREE do Twitter API
       const { url, codeVerifier, state } = client.generateOAuth2AuthLink(
-        `${process.env.NEXT_PUBLIC_APP_URL}/api/callback`,
+        `${baseUrl}/api/callback`,
         { scope: ['tweet.read', 'users.read', 'offline.access'] }
       );
 
