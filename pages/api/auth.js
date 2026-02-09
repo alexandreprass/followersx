@@ -8,7 +8,7 @@ const client = new TwitterApi({
 export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
-      // Remover barra final da URL se existir para evitar //
+      // Remover barra final da URL se existir
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
       
       // Scopes compatíveis com plano FREE do Twitter API
@@ -17,14 +17,18 @@ export default async function handler(req, res) {
         { scope: ['tweet.read', 'users.read', 'offline.access'] }
       );
 
-      // Armazene codeVerifier e state em sessão ou cookie
+      // Cookies seguros para produção
+      const isProduction = process.env.NODE_ENV === 'production';
+      const cookieOptions = `HttpOnly; Path=/; Max-Age=600; SameSite=Lax${isProduction ? '; Secure' : ''}`;
+      
       res.setHeader('Set-Cookie', [
-        `twitter_code_verifier=${codeVerifier}; HttpOnly; Path=/; Max-Age=600`,
-        `twitter_state=${state}; HttpOnly; Path=/; Max-Age=600`
+        `twitter_code_verifier=${codeVerifier}; ${cookieOptions}`,
+        `twitter_state=${state}; ${cookieOptions}`
       ]);
 
       res.status(200).json({ url });
     } catch (error) {
+      console.error('Auth error:', error);
       res.status(500).json({ error: error.message });
     }
   } else {
