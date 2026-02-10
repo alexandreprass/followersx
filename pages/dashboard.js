@@ -1,25 +1,27 @@
 // pages/dashboard.js
+// MELHORADO: Feedback visual em tempo real durante sincronização
 import { useState, useEffect } from 'react';
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
-  const [userProfile, setUserProfile] = useState(null); // NOVO: dados do perfil
-  const [lastSyncInfo, setLastSyncInfo] = useState(null); // NOVO: info da última sincronização
+  const [userProfile, setUserProfile] = useState(null);
+  const [lastSyncInfo, setLastSyncInfo] = useState(null);
   const [followers, setFollowers] = useState([]);
   const [unfollowers, setUnfollowers] = useState([]);
   const [notFollowingBack, setNotFollowingBack] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('stats');
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(''); // NOVO: Status da sincronização
+  const [syncProgress, setSyncProgress] = useState(''); // NOVO: Progresso detalhado
   const [unfollowingBulk, setUnfollowingBulk] = useState(false);
 
   useEffect(() => {
-    loadUserProfile(); // NOVO: carregar perfil
-    loadLastSync(); // NOVO: carregar info de última sincronização
+    loadUserProfile();
+    loadLastSync();
     loadUserData();
   }, []);
 
-  // NOVO: Carregar dados do perfil via API Oficial
   const loadUserProfile = async () => {
     try {
       const res = await fetch('/api/user-profile');
@@ -35,7 +37,6 @@ export default function Dashboard() {
     }
   };
 
-  // NOVO: Carregar informações da última sincronização
   const loadLastSync = async () => {
     try {
       const res = await fetch('/api/get-last-sync');
@@ -51,7 +52,6 @@ export default function Dashboard() {
 
   const loadUserData = async () => {
     try {
-      // Carrega seguidores
       const followersRes = await fetch('/api/followers');
       if (followersRes.ok) {
         const data = await followersRes.json();
@@ -65,10 +65,18 @@ export default function Dashboard() {
     }
   };
 
-  // MODIFICADO: Sincronização com validação de frequência
+  // MELHORADO: Sincronização com feedback visual em tempo real
   const syncFollowers = async () => {
     setSyncing(true);
+    setSyncStatus('🔄 ATUALIZANDO...');
+    setSyncProgress('Conectando à API do X...');
+    
     try {
+      // Simular etapas do processo para melhor UX
+      setTimeout(() => setSyncProgress('Autenticando usuário...'), 500);
+      setTimeout(() => setSyncProgress('Buscando lista de seguidores...'), 1500);
+      setTimeout(() => setSyncProgress('Processando dados (isso pode levar alguns segundos)...'), 3000);
+      
       const res = await fetch('/api/sync-followers', {
         method: 'POST',
       });
@@ -76,18 +84,55 @@ export default function Dashboard() {
       
       if (res.status === 429) {
         // Limite de frequência atingido
+        setSyncStatus('⏳ AGUARDE');
+        setSyncProgress('');
         alert(data.message + '\n\nPróxima atualização disponível em: ' + data.nextUpdateIn);
       } else if (res.ok) {
         // Sincronização bem-sucedida
-        alert(data.message);
-        await loadUserData(); // Recarrega os dados
-        await loadLastSync(); // Atualiza info de última sincronização
+        const totalFollowers = data.totalFollowers || 0;
+        const newFollowersCount = data.newFollowers || 0;
+        const unfollowersCount = data.unfollowersCount || 0;
+        
+        setSyncStatus('✅ ATUALIZADO COM SUCESSO!');
+        setSyncProgress(`${totalFollowers.toLocaleString('pt-BR')} seguidores encontrados`);
+        
+        // Mostrar mensagem detalhada
+        let detailMessage = `🎉 Atualização concluída!\n\n`;
+        detailMessage += `📊 Total de seguidores: ${totalFollowers.toLocaleString('pt-BR')}\n`;
+        
+        if (newFollowersCount > 0) {
+          detailMessage += `🆕 Novos seguidores: +${newFollowersCount}\n`;
+        }
+        
+        if (unfollowersCount > 0) {
+          detailMessage += `👋 Unfollowers: ${unfollowersCount}\n`;
+        }
+        
+        detailMessage += `\n⏰ Volte mais tarde para atualizar novamente!`;
+        
+        alert(detailMessage);
+        
+        // Recarregar dados
+        await loadUserData();
+        await loadLastSync();
+        
+        // Manter mensagem de sucesso por 3 segundos
+        setTimeout(() => {
+          setSyncStatus('');
+          setSyncProgress('');
+        }, 3000);
+        
       } else {
-        alert('Erro: ' + (data.error || 'Erro desconhecido'));
+        setSyncStatus('❌ ERRO');
+        setSyncProgress('');
+        alert('Erro: ' + (data.error || 'Erro desconhecido') + '\n\n' + (data.message || ''));
       }
     } catch (err) {
+      setSyncStatus('❌ ERRO');
+      setSyncProgress('');
       alert('Erro ao sincronizar: ' + err.message);
     }
+    
     setSyncing(false);
   };
 
@@ -160,7 +205,7 @@ export default function Dashboard() {
         <button onClick={logout} style={styles.logoutBtn}>Sair</button>
       </div>
 
-      {/* NOVO: Card de Perfil do Usuário */}
+      {/* Card de Perfil do Usuário */}
       {userProfile && (
         <div style={styles.profileCard}>
           <img 
@@ -190,8 +235,19 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* NOVO: Informação de Última Sincronização */}
-      {lastSyncInfo && (
+      {/* NOVO: Card de Status da Sincronização */}
+      {syncing && (
+        <div style={styles.syncStatusCard}>
+          <div style={styles.syncStatusText}>{syncStatus}</div>
+          <div style={styles.syncProgressText}>{syncProgress}</div>
+          <div style={styles.loadingBar}>
+            <div style={styles.loadingBarFill}></div>
+          </div>
+        </div>
+      )}
+
+      {/* Card de Última Sincronização */}
+      {lastSyncInfo && !syncing && (
         <div style={styles.lastSyncCard}>
           {lastSyncInfo.lastSync ? (
             <>
@@ -251,14 +307,18 @@ export default function Dashboard() {
           <div>
             <h2 style={styles.subtitle}>Bem-vindo ao seu Dashboard!</h2>
             <p style={styles.text}>
-              Você tem {followers.length} seguidores atualmente.
+              Você tem {followers.length.toLocaleString('pt-BR')} seguidores atualmente.
             </p>
             <button
               onClick={syncFollowers}
               disabled={syncing}
-              style={styles.button}
+              style={{
+                ...styles.button,
+                opacity: syncing ? 0.7 : 1,
+                cursor: syncing ? 'not-allowed' : 'pointer',
+              }}
             >
-              {syncing ? 'Sincronizando...' : '🔄 Atualizar Dados'}
+              {syncing ? '⏳ Sincronizando...' : '🔄 Atualizar Dados'}
             </button>
             
             <div style={styles.info}>
@@ -268,6 +328,9 @@ export default function Dashboard() {
                 <li>❌ <strong>Não me seguem</strong>: Veja quem você segue mas não te segue de volta</li>
                 <li>🔄 <strong>Atualizar Dados</strong>: Sincroniza seus seguidores e detecta mudanças</li>
               </ul>
+              <p style={{ marginTop: '1rem', fontSize: '0.9rem', opacity: 0.8 }}>
+                💡 <strong>Dica:</strong> Você pode atualizar seus dados a cada 12 horas para monitorar mudanças.
+              </p>
             </div>
           </div>
         )}
@@ -276,17 +339,23 @@ export default function Dashboard() {
           <div>
             <h2 style={styles.subtitle}>Histórico de Unfollowers (últimos 30 dias)</h2>
             {unfollowers.length === 0 ? (
-              <p style={styles.text}>Nenhum unfollower detectado ainda. Clique em "Atualizar Dados" para começar o rastreamento.</p>
+              <p style={styles.text}>✨ Nenhum unfollower detectado nos últimos 30 dias!</p>
             ) : (
               <div style={styles.list}>
-                {unfollowers.map((day, idx) => (
-                  <div key={idx} style={styles.dayGroup}>
-                    <h3 style={styles.date}>{day.date}</h3>
-                    {day.unfollowers.map((person, i) => (
-                      <div key={i} style={styles.listItem}>
-                        @{person.id} deixou de te seguir
-                      </div>
-                    ))}
+                {unfollowers.map((person, idx) => (
+                  <div key={idx} style={styles.listItem}>
+                    <img
+                      src={person.profile_image_url || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png'}
+                      alt={person.username}
+                      style={styles.avatar}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div style={styles.name}>{person.name}</div>
+                      <div style={styles.username}>@{person.username}</div>
+                    </div>
+                    <div style={styles.unfollowDate}>
+                      {new Date(person.unfollowedAt).toLocaleDateString('pt-BR')}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -296,12 +365,11 @@ export default function Dashboard() {
 
         {tab === 'notfollowing' && (
           <div>
-            <h2 style={styles.subtitle}>Pessoas que você segue mas não te seguem de volta</h2>
+            <h2 style={styles.subtitle}>Pessoas que não te seguem de volta</h2>
             {notFollowingBack.length === 0 ? (
-              <p style={styles.text}>Carregando...</p>
+              <p style={styles.text}>✨ Todas as pessoas que você segue te seguem de volta!</p>
             ) : (
               <>
-                <p style={styles.text}>{notFollowingBack.length} pessoa(s) encontrada(s)</p>
                 <button
                   onClick={unfollowBulk}
                   disabled={unfollowingBulk}
@@ -435,7 +503,7 @@ const styles = {
     fontSize: '1.1rem',
     fontWeight: 'bold',
     cursor: 'pointer',
-    transition: 'transform 0.2s',
+    transition: 'all 0.3s',
   },
   dangerButton: {
     padding: '12px 30px',
@@ -460,15 +528,6 @@ const styles = {
     flexDirection: 'column',
     gap: '1rem',
   },
-  dayGroup: {
-    marginBottom: '2rem',
-  },
-  date: {
-    fontSize: '1.5rem',
-    marginBottom: '1rem',
-    borderBottom: '2px solid rgba(255,255,255,0.3)',
-    paddingBottom: '0.5rem',
-  },
   listItem: {
     display: 'flex',
     alignItems: 'center',
@@ -491,6 +550,11 @@ const styles = {
     fontSize: '0.95rem',
     opacity: 0.8,
   },
+  unfollowDate: {
+    fontSize: '0.85rem',
+    opacity: 0.7,
+    fontStyle: 'italic',
+  },
   loading: {
     display: 'flex',
     justifyContent: 'center',
@@ -498,7 +562,7 @@ const styles = {
     height: '100vh',
     fontSize: '2rem',
   },
-  // NOVOS ESTILOS: Card de Perfil
+  // Card de Perfil
   profileCard: {
     maxWidth: '1200px',
     margin: '0 auto 2rem',
@@ -555,9 +619,9 @@ const styles = {
   },
   metricLabel: {
     fontSize: '0.9rem',
-    opacity: 0.8,
+    opacity: 0.8',
   },
-  // NOVOS ESTILOS: Informação de Última Sincronização
+  // Card de Última Sincronização
   lastSyncCard: {
     maxWidth: '1200px',
     margin: '0 auto 2rem',
@@ -581,4 +645,58 @@ const styles = {
     fontSize: '0.95rem',
     opacity: 0.85,
   },
+  // NOVOS: Card de Status da Sincronização em Tempo Real
+  syncStatusCard: {
+    maxWidth: '1200px',
+    margin: '0 auto 2rem',
+    background: 'rgba(29, 155, 240, 0.25)',
+    backdropFilter: 'blur(10px)',
+    borderRadius: '20px',
+    padding: '2rem',
+    border: '2px solid rgba(29, 155, 240, 0.5)',
+    textAlign: 'center',
+    boxShadow: '0 8px 32px rgba(29, 155, 240, 0.3)',
+  },
+  syncStatusText: {
+    fontSize: '1.8rem',
+    fontWeight: 'bold',
+    marginBottom: '1rem',
+    animation: 'pulse 2s ease-in-out infinite',
+  },
+  syncProgressText: {
+    fontSize: '1.1rem',
+    opacity: 0.9,
+    marginBottom: '1.5rem',
+  },
+  loadingBar: {
+    width: '100%',
+    height: '6px',
+    background: 'rgba(255,255,255,0.2)',
+    borderRadius: '10px',
+    overflow: 'hidden',
+  },
+  loadingBarFill: {
+    height: '100%',
+    background: 'linear-gradient(90deg, #1d9bf0, #00d4ff)',
+    animation: 'loading 2s ease-in-out infinite',
+    borderRadius: '10px',
+  },
 };
+
+// Adicionar animações CSS no head (inject via useEffect ou global CSS)
+if (typeof window !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    
+    @keyframes loading {
+      0% { width: 0%; }
+      50% { width: 70%; }
+      100% { width: 100%; }
+    }
+  `;
+  document.head.appendChild(style);
+}
