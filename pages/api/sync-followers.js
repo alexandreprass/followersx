@@ -1,127 +1,162 @@
-// pages/api/sync-followers.js - VERSÃO ATUALIZADA
+// pages/api/sync-followers.js
+// Sistema híbrido: API Oficial (perfil) + TweetAPI (lista de seguidores)
 import { TwitterApi } from 'twitter-api-v2';
+import { getAllFollowers, normalizeFollowerData } from '../../lib/tweetapi-client';
 import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
-  const accessToken = req.cookies.accessToken;
-  const userId = req.cookies.userId;
+  // Apenas método POST
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Método não permitido' });
+  }
 
+  const accessToken = req.cookies.accessToken;
+  
   if (!accessToken) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
 
-  if (!userId) {
-    return res.status(400).json({ error: 'UserId não encontrado' });
-  }
-
   try {
-    console.log('[sync-followers] Iniciando sincronização para userId:', userId);
-
+    // 1. Buscar dados básicos do perfil via API Oficial (para pegar o userId)
+    console.log('[SyncFollowers] Buscando dados do perfil via API Oficial...');
     const client = new TwitterApi(accessToken);
+    const { data: me } = await client.v2.me();
+    const userId = me.id;
     
-    // Busca informações atualizadas do usuário
-    const me = await client.v2.me({
-      'user.fields': ['profile_image_url', 'public_metrics', 'name', 'username'],
-    });
+    console.log(`[SyncFollowers] UserId obtido: ${userId} (@${me.username})`);
 
-    console.log('[sync-followers] Dados do usuário obtidos:', me.data.username);
-
-    // Atualiza dados básicos do usuário no Redis
-    await redis.hset(`user:${userId}`, {
-      name: me.data.name,
-      username: me.data.username,
-      profile_image_url: me.data.profile_image_url || '',
-      followers_count: me.data.public_metrics.followers_count || 0,
-      following_count: me.data.public_metrics.following_count || 0,
-      last_updated: new Date().toISOString(),
-    });
-
-    // Busca lista ATUAL de seguidores da API do Twitter
-    console.log('[sync-followers] Buscando seguidores atuais...');
-    const currentRes = await client.v2.followers(userId, { 
-      max_results: 1000,
-      'user.fields': ['profile_image_url', 'name', 'username'],
-    });
-
-    const currentFollowers = currentRes.data || [];
-    const currentIds = currentFollowers.map(u => u.id);
-
-    console.log('[sync-followers] Seguidores atuais:', currentIds.length);
-
-    // Busca lista ANTERIOR de seguidores do Redis
-    const prevStr = await redis.get(`followers:${userId}:current`);
-    const prevFollowers = prevStr ? JSON.parse(prevStr) : [];
-    const prevIds = prevFollowers.map(u => u.id);
-
-    console.log('[sync-followers] Seguidores anteriores no Redis:', prevIds.length);
-
-    // Detecta quem deixou de seguir (estava na lista anterior mas não está na atual)
-    const unfollowerIds = prevIds.filter(id => !currentIds.includes(id));
-
-    console.log('[sync-followers] Unfollowers detectados:', unfollowerIds.length);
-
-    // Salva unfollowers no Redis (com dados completos)
-    if (unfollowerIds.length > 0) {
-      const today = new Date().toISOString().split('T')[0];
+    // 2. Verificar última sincronização (controle de frequência)
+    const lastSync = await redis.get(`followers:${userId}:lastSync`);
+    
+    if (lastSync) {
+      const lastSyncDate = new Date(lastSync);
+      const hoursSince = (Date.now() - lastSyncDate.getTime()) / (1000 * 60 * 60);
       
-      // Busca dados completos dos unfollowers da lista anterior
-      const unfollowersData = prevFollowers
-        .filter(u => unfollowerIds.includes(u.id))
-        .map(u => ({
-          id: u.id,
-          username: u.username,
-          name: u.name,
-          profile_image_url: u.profile_image_url || '',
-          date: today,
-        }));
-
-      // Salva cada unfollower na lista do dia
-      const entries = unfollowersData.map(u => JSON.stringify(u));
-      await redis.rpush(`unfollowers:${userId}:${today}`, ...entries);
-      await redis.expire(`unfollowers:${userId}:${today}`, 30 * 24 * 60 * 60); // 30 dias
-
-      console.log('[sync-followers] Unfollowers salvos no Redis:', unfollowersData.length);
+      console.log(`[SyncFollowers] Última sincronização: ${lastSyncDate.toISOString()} (${hoursSince.toFixed(1)}h atrás)`);
+      
+      if (hoursSince < 12) {
+        const hoursRemaining = Math.ceil(12 - hoursSince);
+        return res.status(429).json({
+          error: 'Limite de frequência atingido',
+          message: `Você já atualizou recentemente. Volte amanhã ou mais tarde para atualizar novamente!`,
+          nextUpdateIn: `${hoursRemaining} horas`,
+          lastSync: lastSync,
+          canUpdateAt: new Date(lastSyncDate.getTime() + (12 * 60 * 60 * 1000)).toISOString(),
+        });
+      }
+    } else {
+      console.log('[SyncFollowers] Primeira sincronização deste usuário.');
     }
 
-    // Atualiza lista atual de seguidores no Redis
-    const followersToSave = currentFollowers.map(u => ({
-      id: u.id,
-      username: u.username,
-      name: u.name,
-      profile_image_url: u.profile_image_url || '',
-    }));
-
-    await redis.set(`followers:${userId}:current`, JSON.stringify(followersToSave));
-
-    console.log('[sync-followers] Lista de seguidores atualizada no Redis');
-
-    // Retorna resultado
-    res.json({ 
-      success: true,
-      message: 'Lista de seguidores atualizada com sucesso! Volte amanhã ou mais tarde para atualizar novamente e ver quem deixou de te seguir.',
-      stats: {
-        current_followers: currentIds.length,
-        new_unfollowers: unfollowerIds.length,
-        unfollowers: prevIds.length > 0 ? unfollowerIds.length : null,
-      },
-      unfollowers: unfollowerIds.length > 0 ? prevFollowers.filter(u => unfollowerIds.includes(u.id)) : [],
-    });
-
-  } catch (err) {
-    console.error('[sync-followers] ERRO:', err.message, err.data || err);
+    // 3. Buscar lista atual de seguidores via TweetAPI (economiza rate limits da API Oficial)
+    console.log('[SyncFollowers] Buscando lista de seguidores via TweetAPI...');
+    const currentFollowersRaw = await getAllFollowers(userId);
     
-    // Verifica se é erro de permissão do Twitter
-    if (err.code === 403) {
-      return res.status(403).json({ 
-        error: 'Acesso negado pela API do Twitter',
-        message: 'Seu App precisa estar vinculado a um Project no Twitter Developer Portal. Veja: https://developer.twitter.com/en/docs/projects/overview',
-        details: err.data || err.message,
+    // Normalizar dados dos seguidores
+    const currentFollowers = currentFollowersRaw.map(normalizeFollowerData);
+    console.log(`[SyncFollowers] Total de seguidores obtidos via TweetAPI: ${currentFollowers.length}`);
+    
+    // 4. Pegar lista anterior do Redis
+    const previousFollowersStr = await redis.get(`followers:${userId}:list`);
+    const previousFollowers = previousFollowersStr ? JSON.parse(previousFollowersStr) : [];
+    
+    console.log(`[SyncFollowers] Seguidores anteriores no Redis: ${previousFollowers.length}`);
+    
+    // 5. Detectar unfollowers (quem estava antes e não está mais)
+    const prevIds = previousFollowers.map(f => f.id);
+    const currentIds = currentFollowers.map(f => f.id);
+    const unfollowerIds = prevIds.filter(id => !currentIds.includes(id));
+    
+    console.log(`[SyncFollowers] Unfollowers detectados: ${unfollowerIds.length}`);
+    
+    // 6. Salvar unfollowers no histórico (se houver)
+    if (unfollowerIds.length > 0) {
+      const unfollowerData = previousFollowers
+        .filter(f => unfollowerIds.includes(f.id))
+        .map(user => ({
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          profile_image_url: user.profile_image_url,
+          unfollowedAt: new Date().toISOString(),
+        }));
+      
+      // Buscar histórico existente
+      const existingHistoryStr = await redis.get(`unfollowers:${userId}:history`);
+      const existingHistory = existingHistoryStr ? JSON.parse(existingHistoryStr) : [];
+      
+      // Adicionar novos unfollowers ao início da lista
+      const updatedHistory = [...unfollowerData, ...existingHistory];
+      
+      // Manter apenas últimos 30 dias
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const filteredHistory = updatedHistory.filter(u => 
+        new Date(u.unfollowedAt) > thirtyDaysAgo
+      );
+      
+      console.log(`[SyncFollowers] Salvando histórico de unfollowers: ${filteredHistory.length} registros (últimos 30 dias)`);
+      
+      await redis.set(
+        `unfollowers:${userId}:history`,
+        JSON.stringify(filteredHistory)
+      );
+    }
+    
+    // 7. Atualizar lista atual de seguidores
+    await redis.set(
+      `followers:${userId}:list`,
+      JSON.stringify(currentFollowers)
+    );
+    
+    console.log('[SyncFollowers] Lista de seguidores atualizada no Redis.');
+    
+    // 8. Atualizar timestamp da última sincronização
+    const now = new Date().toISOString();
+    await redis.set(
+      `followers:${userId}:lastSync`,
+      now
+    );
+    
+    console.log(`[SyncFollowers] Timestamp atualizado: ${now}`);
+    
+    // 9. Retornar resultado
+    const successMessage = unfollowerIds.length > 0
+      ? `Lista de seguidores atualizada com sucesso! ${unfollowerIds.length} pessoa(s) deixaram de te seguir. Volte amanhã ou mais tarde para atualizar novamente.`
+      : 'Lista de seguidores atualizada com sucesso! Nenhum novo unfollower detectado. Volte amanhã ou mais tarde para atualizar novamente.';
+
+    res.status(200).json({
+      success: true,
+      message: successMessage,
+      unfollowersCount: unfollowerIds.length,
+      totalFollowers: currentFollowers.length,
+      previousFollowers: previousFollowers.length,
+      newFollowers: currentFollowers.length - previousFollowers.length + unfollowerIds.length,
+      lastSync: now,
+    });
+    
+  } catch (error) {
+    console.error('[SyncFollowers] Erro na sincronização:', error);
+    
+    // Verificar tipo de erro
+    if (error.message?.includes('TWEETAPI_KEY')) {
+      return res.status(500).json({
+        error: 'Configuração inválida',
+        message: 'A chave da TweetAPI não está configurada. Adicione TWEETAPI_KEY nas variáveis de ambiente.',
+        details: error.message,
       });
     }
-
+    
+    if (error.code === 401 || error.code === 403) {
+      return res.status(401).json({
+        error: 'Token de acesso inválido ou expirado',
+        message: 'Por favor, faça login novamente',
+      });
+    }
+    
     res.status(500).json({ 
-      error: 'Erro ao sincronizar seguidores', 
-      details: err.message,
+      error: 'Erro ao sincronizar dados',
+      details: error.message,
     });
   }
 }
