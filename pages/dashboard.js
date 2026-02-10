@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react';
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null); // NOVO: dados do perfil
+  const [lastSyncInfo, setLastSyncInfo] = useState(null); // NOVO: info da última sincronização
   const [followers, setFollowers] = useState([]);
   const [unfollowers, setUnfollowers] = useState([]);
   const [notFollowingBack, setNotFollowingBack] = useState([]);
@@ -12,8 +14,40 @@ export default function Dashboard() {
   const [unfollowingBulk, setUnfollowingBulk] = useState(false);
 
   useEffect(() => {
+    loadUserProfile(); // NOVO: carregar perfil
+    loadLastSync(); // NOVO: carregar info de última sincronização
     loadUserData();
   }, []);
+
+  // NOVO: Carregar dados do perfil via API Oficial
+  const loadUserProfile = async () => {
+    try {
+      const res = await fetch('/api/user-profile');
+      if (res.ok) {
+        const data = await res.json();
+        setUserProfile(data.profile);
+        console.log('Perfil carregado:', data.profile);
+      } else {
+        console.error('Erro ao carregar perfil:', await res.text());
+      }
+    } catch (err) {
+      console.error('Erro ao carregar perfil:', err);
+    }
+  };
+
+  // NOVO: Carregar informações da última sincronização
+  const loadLastSync = async () => {
+    try {
+      const res = await fetch('/api/get-last-sync');
+      if (res.ok) {
+        const data = await res.json();
+        setLastSyncInfo(data);
+        console.log('Última sincronização:', data);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar última sincronização:', err);
+    }
+  };
 
   const loadUserData = async () => {
     try {
@@ -31,19 +65,26 @@ export default function Dashboard() {
     }
   };
 
+  // MODIFICADO: Sincronização com validação de frequência
   const syncFollowers = async () => {
     setSyncing(true);
     try {
-      const res = await fetch('/api/sync-followers');
+      const res = await fetch('/api/sync-followers', {
+        method: 'POST',
+      });
       const data = await res.json();
       
-      if (data.unfollowers && data.unfollowers.length > 0) {
-        alert(`${data.unfollowers.length} pessoa(s) deixaram de te seguir!`);
+      if (res.status === 429) {
+        // Limite de frequência atingido
+        alert(data.message + '\n\nPróxima atualização disponível em: ' + data.nextUpdateIn);
+      } else if (res.ok) {
+        // Sincronização bem-sucedida
+        alert(data.message);
+        await loadUserData(); // Recarrega os dados
+        await loadLastSync(); // Atualiza info de última sincronização
       } else {
-        alert('Nenhum novo unfollower detectado!');
+        alert('Erro: ' + (data.error || 'Erro desconhecido'));
       }
-      
-      await loadUserData();
     } catch (err) {
       alert('Erro ao sincronizar: ' + err.message);
     }
@@ -118,6 +159,56 @@ export default function Dashboard() {
         <h1 style={styles.title}>📊 Followers Tracker</h1>
         <button onClick={logout} style={styles.logoutBtn}>Sair</button>
       </div>
+
+      {/* NOVO: Card de Perfil do Usuário */}
+      {userProfile && (
+        <div style={styles.profileCard}>
+          <img 
+            src={userProfile.profile_image_url?.replace('_normal', '_400x400') || userProfile.profile_image_url} 
+            alt={userProfile.name}
+            style={styles.profileImage}
+          />
+          <div style={styles.profileInfo}>
+            <h2 style={styles.profileName}>{userProfile.name}</h2>
+            <p style={styles.profileUsername}>@{userProfile.username}</p>
+            <p style={styles.profileId}>ID: {userProfile.id}</p>
+          </div>
+          <div style={styles.profileMetrics}>
+            <div style={styles.metricItem}>
+              <div style={styles.metricNumber}>{userProfile.public_metrics?.followers_count?.toLocaleString('pt-BR') || 0}</div>
+              <div style={styles.metricLabel}>Seguidores</div>
+            </div>
+            <div style={styles.metricItem}>
+              <div style={styles.metricNumber}>{userProfile.public_metrics?.following_count?.toLocaleString('pt-BR') || 0}</div>
+              <div style={styles.metricLabel}>Seguindo</div>
+            </div>
+            <div style={styles.metricItem}>
+              <div style={styles.metricNumber}>{userProfile.public_metrics?.tweet_count?.toLocaleString('pt-BR') || 0}</div>
+              <div style={styles.metricLabel}>Posts</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NOVO: Informação de Última Sincronização */}
+      {lastSyncInfo && (
+        <div style={styles.lastSyncCard}>
+          {lastSyncInfo.lastSync ? (
+            <>
+              <span style={styles.lastSyncLabel}>📅 Última atualização: </span>
+              <span style={styles.lastSyncValue}>{lastSyncInfo.lastSyncFormatted}</span>
+              <span style={styles.lastSyncStatus}>
+                {lastSyncInfo.canUpdate 
+                  ? ' ✅ Você pode atualizar agora!' 
+                  : ` ⏳ Aguarde ${lastSyncInfo.hoursRemaining}h para próxima atualização`
+                }
+              </span>
+            </>
+          ) : (
+            <span style={styles.lastSyncLabel}>🆕 Primeira vez aqui? Clique em "Atualizar Dados" para começar!</span>
+          )}
+        </div>
+      )}
 
       <div style={styles.stats}>
         <div style={styles.statCard}>
@@ -406,5 +497,88 @@ const styles = {
     alignItems: 'center',
     height: '100vh',
     fontSize: '2rem',
+  },
+  // NOVOS ESTILOS: Card de Perfil
+  profileCard: {
+    maxWidth: '1200px',
+    margin: '0 auto 2rem',
+    background: 'rgba(255,255,255,0.15)',
+    backdropFilter: 'blur(10px)',
+    borderRadius: '20px',
+    padding: '2rem',
+    border: '1px solid rgba(255,255,255,0.3)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2rem',
+    flexWrap: 'wrap',
+  },
+  profileImage: {
+    width: '120px',
+    height: '120px',
+    borderRadius: '50%',
+    border: '4px solid rgba(255,255,255,0.3)',
+    objectFit: 'cover',
+  },
+  profileInfo: {
+    flex: '1',
+    minWidth: '200px',
+  },
+  profileName: {
+    fontSize: '2rem',
+    fontWeight: 'bold',
+    margin: '0 0 0.5rem 0',
+  },
+  profileUsername: {
+    fontSize: '1.3rem',
+    opacity: 0.85,
+    margin: '0 0 0.5rem 0',
+  },
+  profileId: {
+    fontSize: '0.9rem',
+    opacity: 0.6,
+    margin: 0,
+    fontFamily: 'monospace',
+  },
+  profileMetrics: {
+    display: 'flex',
+    gap: '2rem',
+    flexWrap: 'wrap',
+  },
+  metricItem: {
+    textAlign: 'center',
+    minWidth: '100px',
+  },
+  metricNumber: {
+    fontSize: '2rem',
+    fontWeight: 'bold',
+    marginBottom: '0.3rem',
+  },
+  metricLabel: {
+    fontSize: '0.9rem',
+    opacity: 0.8,
+  },
+  // NOVOS ESTILOS: Informação de Última Sincronização
+  lastSyncCard: {
+    maxWidth: '1200px',
+    margin: '0 auto 2rem',
+    background: 'rgba(29, 155, 240, 0.15)',
+    backdropFilter: 'blur(10px)',
+    borderRadius: '15px',
+    padding: '1rem 1.5rem',
+    border: '1px solid rgba(29, 155, 240, 0.3)',
+    textAlign: 'center',
+    fontSize: '1rem',
+  },
+  lastSyncLabel: {
+    fontWeight: '500',
+    opacity: 0.9,
+  },
+  lastSyncValue: {
+    fontWeight: 'bold',
+    margin: '0 0.5rem',
+  },
+  lastSyncStatus: {
+    fontSize: '0.95rem',
+    opacity: 0.85,
   },
 };
