@@ -1,4 +1,4 @@
-// pages/api/callback.js - Versão PKCE sem Client Secret
+// pages/api/callback.js - VERSÃO CORRIGIDA com Client Secret
 import { TwitterApi } from 'twitter-api-v2';
 import { serialize } from 'cookie';
 import redis from '../../lib/redis';
@@ -17,10 +17,13 @@ export default async function handler(req, res) {
   if (state !== cookies.oauthState) return res.status(400).send('State mismatch');
 
   try {
-    console.log('[callback] Iniciando troca PKCE (sem Client Secret)...');
+    console.log('[callback] Iniciando troca OAuth2 com Client Secret...');
 
-    // Cria cliente só com Client ID (PKCE não usa Secret)
-    const twitter = new TwitterApi({ clientId: process.env.TWITTER_CLIENT_ID });
+    // ✅ CORREÇÃO: Twitter EXIGE clientId E clientSecret
+    const twitter = new TwitterApi({
+      clientId: process.env.TWITTER_CLIENT_ID,
+      clientSecret: process.env.TWITTER_CLIENT_SECRET
+    });
 
     const { accessToken, refreshToken, expiresIn } = await twitter.loginWithOAuth2({
       code: code.toString(),
@@ -28,7 +31,7 @@ export default async function handler(req, res) {
       redirectUri: `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')}/api/callback`,
     });
 
-    console.log('[callback] Tokens obtidos!');
+    console.log('[callback] Tokens obtidos com sucesso!');
 
     res.setHeader('Set-Cookie', [
       serialize('accessToken', accessToken, { path: '/', httpOnly: true, secure: true, sameSite: 'none', maxAge: expiresIn }),
@@ -41,7 +44,7 @@ export default async function handler(req, res) {
     });
 
     const userId = user.data.id;
-    console.log('[callback] Usuário OK:', user.data.username, userId);
+    console.log('[callback] Usuário autenticado:', user.data.username, userId);
 
     await redis.hset(`user:${userId}`, {
       name: user.data.name,

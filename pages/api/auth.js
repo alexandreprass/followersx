@@ -1,3 +1,4 @@
+// pages/api/auth.js - VERSÃO CORRIGIDA com Client Secret
 import { TwitterApi } from 'twitter-api-v2';
 
 export default async function handler(req, res) {
@@ -6,7 +7,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const client = new TwitterApi({ clientId: process.env.TWITTER_CLIENT_ID });
+    // ✅ CORREÇÃO: Twitter EXIGE clientId E clientSecret
+    const client = new TwitterApi({
+      clientId: process.env.TWITTER_CLIENT_ID,
+      clientSecret: process.env.TWITTER_CLIENT_SECRET
+    });
 
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://followersx.vercel.app').replace(/\/$/, '');
     const callbackUrl = `${appUrl}/api/callback`;
