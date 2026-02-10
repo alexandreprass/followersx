@@ -4,12 +4,6 @@ import Head from 'next/head';
 export default function Home() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [followers, setFollowers] = useState([]);
-  const [following, setFollowing] = useState([]);
-  const [unfollowers, setUnfollowers] = useState([]);
-  const [notFollowingBack, setNotFollowingBack] = useState([]);
-  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     loadUserData();
@@ -17,7 +11,6 @@ export default function Home() {
 
   const loadUserData = async () => {
     try {
-      // Verificar se há dados do usuário nos cookies
       const cookies = document.cookie.split(';').reduce((acc, cookie) => {
         const [key, value] = cookie.trim().split('=');
         if (key && value) {
@@ -30,152 +23,41 @@ export default function Home() {
         try {
           const decodedUser = decodeURIComponent(cookies.twitter_user);
           const userData = JSON.parse(decodedUser);
-          
-          // Adicionar contadores se não existirem
-          if (!userData.followers_count) userData.followers_count = 0;
-          if (!userData.following_count) userData.following_count = 0;
-          
           setUser(userData);
-          loadStoredData();
         } catch (error) {
           console.error('Erro ao parsear usuário:', error);
-          // Limpar cookie corrompido
           document.cookie = 'twitter_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
         }
       }
     } catch (error) {
-      console.error('Erro ao carregar dados do usuário:', error);
-    }
-  };
-
-  const loadStoredData = () => {
-    const storedFollowers = localStorage.getItem('followers');
-    const storedHistory = localStorage.getItem('unfollowers_history');
-    
-    if (storedFollowers) {
-      setFollowers(JSON.parse(storedFollowers));
-    }
-    if (storedHistory) {
-      setHistory(JSON.parse(storedHistory));
+      console.error('Erro ao carregar dados:', error);
     }
   };
 
   const handleLogin = async () => {
     setLoading(true);
     try {
-      // Buscar URL de autenticação OAuth
       const response = await fetch('/api/auth');
       const data = await response.json();
       
       if (data.url) {
-        // Redirecionar para autenticação do Twitter
         window.location.href = data.url;
       } else {
-        alert('Erro ao iniciar autenticação. Tente novamente.');
+        alert('Erro ao iniciar autenticação');
       }
     } catch (error) {
       console.error('Erro no login:', error);
-      alert('Erro ao conectar com Twitter. Verifique as configurações.');
+      alert('Erro ao conectar com Twitter');
     }
     setLoading(false);
   };
 
-  const fetchFollowers = async () => {
-    setLoading(true);
-    
-    try {
-      // Aqui você fará a chamada real para a API do Twitter
-      const response = await fetch('/api/followers');
-      const data = await response.json();
-      
-      // Verificar unfollowers
-      const storedFollowers = localStorage.getItem('followers');
-      if (storedFollowers) {
-        const previousFollowers = JSON.parse(storedFollowers);
-        const currentFollowerIds = data.followers.map(f => f.id);
-        const previousFollowerIds = previousFollowers.map(f => f.id);
-        
-        const newUnfollowers = previousFollowers.filter(
-          f => !currentFollowerIds.includes(f.id)
-        );
-        
-        if (newUnfollowers.length > 0) {
-          updateUnfollowersHistory(newUnfollowers);
-        }
-      }
-      
-      setFollowers(data.followers);
-      localStorage.setItem('followers', JSON.stringify(data.followers));
-      
-    } catch (error) {
-      console.error('Erro ao buscar seguidores:', error);
-    }
-    
-    setLoading(false);
-  };
-
-  const updateUnfollowersHistory = (newUnfollowers) => {
-    const storedHistory = localStorage.getItem('unfollowers_history');
-    let history = storedHistory ? JSON.parse(storedHistory) : [];
-    
-    const timestamp = new Date().toISOString();
-    const newEntries = newUnfollowers.map(user => ({
-      ...user,
-      unfollowed_at: timestamp
-    }));
-    
-    history = [...newEntries, ...history];
-    
-    // Manter apenas últimos 30 dias
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    history = history.filter(entry => 
-      new Date(entry.unfollowed_at) > thirtyDaysAgo
-    );
-    
-    localStorage.setItem('unfollowers_history', JSON.stringify(history));
-    setHistory(history);
-  };
-
-  const checkNotFollowingBack = async () => {
-    setLoading(true);
-    setActiveTab('not-following-back');
-    
-    try {
-      const response = await fetch('/api/not-following-back');
-      const data = await response.json();
-      setNotFollowingBack(data.users);
-    } catch (error) {
-      console.error('Erro ao verificar quem não segue de volta:', error);
-    }
-    
-    setLoading(false);
-  };
-
-  const unfollowAll = async () => {
-    if (!confirm(`Tem certeza que deseja deixar de seguir ${notFollowingBack.length} pessoas?`)) {
-      return;
-    }
-    
-    setLoading(true);
-    
-    try {
-      const response = await fetch('/api/unfollow-bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userIds: notFollowingBack.map(u => u.id) })
-      });
-      
-      const data = await response.json();
-      alert(`${data.unfollowed} usuários deixaram de ser seguidos!`);
-      setNotFollowingBack([]);
-      
-    } catch (error) {
-      console.error('Erro ao deixar de seguir:', error);
-      alert('Erro ao processar. Tente novamente.');
-    }
-    
-    setLoading(false);
+  const handleLogout = () => {
+    document.cookie = 'twitter_access_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    document.cookie = 'twitter_refresh_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    document.cookie = 'twitter_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    setUser(null);
+    window.location.href = '/';
   };
 
   if (!user) {
@@ -186,11 +68,21 @@ export default function Home() {
         </Head>
         
         <div className="login-container">
-          <h1>📊 Twitter Unfollowers</h1>
-          <p>Descubra quem deixou de te seguir e gerencie seus seguidores</p>
-          <button onClick={handleLogin} className="btn-primary">
-            Conectar com Twitter/X
+          <h1>📊 Twitter Analytics</h1>
+          <p>Conecte sua conta do Twitter para ver suas estatísticas</p>
+          <button onClick={handleLogin} className="btn-primary" disabled={loading}>
+            {loading ? 'Conectando...' : 'Conectar com Twitter/X'}
           </button>
+          
+          <div className="warning-box">
+            <p><strong>⚠️ Aviso:</strong> Este app usa o plano FREE da API do Twitter.</p>
+            <p>Funcionalidades disponíveis:</p>
+            <ul>
+              <li>✅ Ver seus dados públicos</li>
+              <li>✅ Ver seu perfil</li>
+              <li>❌ Seguidores/Following (precisa plano pago $100/mês)</li>
+            </ul>
+          </div>
         </div>
 
         <style jsx>{`
@@ -200,6 +92,7 @@ export default function Home() {
             align-items: center;
             justify-content: center;
             background: linear-gradient(135deg, #1DA1F2 0%, #14171A 100%);
+            padding: 2rem;
           }
           .login-container {
             background: white;
@@ -207,7 +100,7 @@ export default function Home() {
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             text-align: center;
-            max-width: 400px;
+            max-width: 500px;
           }
           h1 {
             color: #14171A;
@@ -228,10 +121,33 @@ export default function Home() {
             cursor: pointer;
             transition: all 0.3s;
           }
-          .btn-primary:hover {
+          .btn-primary:hover:not(:disabled) {
             background: #1a8cd8;
             transform: translateY(-2px);
             box-shadow: 0 10px 20px rgba(29, 161, 242, 0.3);
+          }
+          .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+          }
+          .warning-box {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: #FFF3CD;
+            border-radius: 10px;
+            text-align: left;
+          }
+          .warning-box p {
+            margin: 0.5rem 0;
+            color: #856404;
+          }
+          .warning-box strong {
+            color: #856404;
+          }
+          .warning-box ul {
+            margin: 0.5rem 0;
+            padding-left: 1.5rem;
+            color: #856404;
           }
         `}</style>
       </div>
@@ -241,140 +157,99 @@ export default function Home() {
   return (
     <div className="app">
       <Head>
-        <title>Twitter Unfollowers - Dashboard</title>
+        <title>Twitter Analytics - {user.username}</title>
       </Head>
 
       <nav className="navbar">
         <div className="nav-content">
-          <h2>📊 Unfollowers Tracker</h2>
+          <h2>📊 Twitter Analytics</h2>
           <div className="user-info">
             <span>@{user.username}</span>
-            <button onClick={() => {
-              // Limpar cookies
-              document.cookie = 'twitter_access_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
-              document.cookie = 'twitter_refresh_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
-              document.cookie = 'twitter_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
-              // Limpar localStorage
-              localStorage.clear();
-              setUser(null);
-              window.location.href = '/';
-            }} className="btn-logout">Sair</button>
+            <button onClick={handleLogout} className="btn-logout">Sair</button>
           </div>
         </div>
       </nav>
 
       <div className="main-content">
-        <aside className="sidebar">
-          <button 
-            className={activeTab === 'dashboard' ? 'active' : ''}
-            onClick={() => setActiveTab('dashboard')}
-          >
-            🏠 Dashboard
-          </button>
-          <button 
-            className={activeTab === 'unfollowers' ? 'active' : ''}
-            onClick={() => setActiveTab('unfollowers')}
-          >
-            📉 Quem deixou de seguir
-          </button>
-          <button 
-            className={activeTab === 'not-following-back' ? 'active' : ''}
-            onClick={checkNotFollowingBack}
-          >
-            ❌ Não me segue de volta
-          </button>
-          <button 
-            onClick={fetchFollowers}
-            className="btn-refresh"
-          >
-            🔄 Atualizar dados
-          </button>
-        </aside>
+        <div className="profile-card">
+          <div className="profile-header">
+            {user.profile_image_url && (
+              <img 
+                src={user.profile_image_url} 
+                alt={user.name}
+                className="profile-image"
+              />
+            )}
+            <h1>{user.name}</h1>
+            <p className="username">@{user.username}</p>
+            <p className="user-id">ID: {user.id}</p>
+          </div>
 
-        <main className="content">
-          {loading && (
-            <div className="loading">
-              <div className="spinner"></div>
-              <p>Carregando...</p>
-            </div>
-          )}
-
-          {activeTab === 'dashboard' && (
-            <div className="dashboard">
-              <h1>Dashboard</h1>
+          <div className="stats-section">
+            <h2>📊 Estatísticas Disponíveis</h2>
+            {user.public_metrics ? (
               <div className="stats-grid">
                 <div className="stat-card">
-                  <div className="stat-number">{user.followers_count.toLocaleString()}</div>
+                  <div className="stat-number">
+                    {user.public_metrics.followers_count?.toLocaleString() || 0}
+                  </div>
                   <div className="stat-label">Seguidores</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-number">{user.following_count.toLocaleString()}</div>
+                  <div className="stat-number">
+                    {user.public_metrics.following_count?.toLocaleString() || 0}
+                  </div>
                   <div className="stat-label">Seguindo</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-number">{history.length}</div>
-                  <div className="stat-label">Unfollowers (30 dias)</div>
+                  <div className="stat-number">
+                    {user.public_metrics.tweet_count?.toLocaleString() || 0}
+                  </div>
+                  <div className="stat-label">Tweets</div>
                 </div>
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="no-metrics">Métricas não disponíveis</p>
+            )}
+          </div>
 
-          {activeTab === 'unfollowers' && (
-            <div className="unfollowers">
-              <h1>Quem deixou de te seguir (últimos 30 dias)</h1>
-              {history.length === 0 ? (
-                <p className="empty-state">Nenhum unfollow registrado nos últimos 30 dias 🎉</p>
-              ) : (
-                <div className="user-list">
-                  {history.map((user, index) => (
-                    <div key={index} className="user-card">
-                      <div className="user-avatar">
-                        {user.name.charAt(0)}
-                      </div>
-                      <div className="user-info-card">
-                        <div className="user-name">{user.name}</div>
-                        <div className="user-username">@{user.username}</div>
-                        <div className="unfollowed-date">
-                          {new Date(user.unfollowed_at).toLocaleDateString('pt-BR')}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+          <div className="info-section">
+            <h2>ℹ️ Informações da Conta</h2>
+            <div className="info-item">
+              <strong>Nome:</strong> {user.name}
             </div>
-          )}
+            <div className="info-item">
+              <strong>Username:</strong> @{user.username}
+            </div>
+            <div className="info-item">
+              <strong>ID:</strong> {user.id}
+            </div>
+            {user.description && (
+              <div className="info-item">
+                <strong>Bio:</strong> {user.description}
+              </div>
+            )}
+            {user.created_at && (
+              <div className="info-item">
+                <strong>Criado em:</strong> {new Date(user.created_at).toLocaleDateString('pt-BR')}
+              </div>
+            )}
+            {user.verified !== undefined && (
+              <div className="info-item">
+                <strong>Verificado:</strong> {user.verified ? '✅ Sim' : '❌ Não'}
+              </div>
+            )}
+          </div>
 
-          {activeTab === 'not-following-back' && (
-            <div className="not-following-back">
-              <h1>Não te seguem de volta</h1>
-              {notFollowingBack.length === 0 ? (
-                <p className="empty-state">Carregue os dados para ver quem não te segue de volta</p>
-              ) : (
-                <>
-                  <div className="actions">
-                    <button onClick={unfollowAll} className="btn-danger">
-                      Deixar de seguir todos ({notFollowingBack.length})
-                    </button>
-                  </div>
-                  <div className="user-list">
-                    {notFollowingBack.map((user, index) => (
-                      <div key={index} className="user-card">
-                        <div className="user-avatar">
-                          {user.name.charAt(0)}
-                        </div>
-                        <div className="user-info-card">
-                          <div className="user-name">{user.name}</div>
-                          <div className="user-username">@{user.username}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </main>
+          <div className="upgrade-box">
+            <h3>🚀 Quer mais funcionalidades?</h3>
+            <p>Para acessar dados de seguidores, unfollowers e mais:</p>
+            <ul>
+              <li>Upgrade para Twitter API Basic ($100/mês)</li>
+              <li>Ou use ferramentas alternativas gratuitas</li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       <style jsx global>{`
@@ -402,7 +277,7 @@ export default function Home() {
           z-index: 100;
         }
         .nav-content {
-          max-width: 1200px;
+          max-width: 800px;
           margin: 0 auto;
           display: flex;
           justify-content: space-between;
@@ -434,165 +309,108 @@ export default function Home() {
           background: #e1e8ed;
         }
         .main-content {
-          max-width: 1200px;
+          max-width: 800px;
           margin: 2rem auto;
-          display: grid;
-          grid-template-columns: 250px 1fr;
-          gap: 2rem;
           padding: 0 2rem;
         }
-        .sidebar {
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
-        }
-        .sidebar button {
-          background: white;
-          border: 1px solid #e1e8ed;
-          padding: 1rem;
-          border-radius: 10px;
-          text-align: left;
-          cursor: pointer;
-          font-size: 1rem;
-          transition: all 0.2s;
-          font-weight: 500;
-        }
-        .sidebar button:hover {
-          background: #f7f9fa;
-          border-color: #1DA1F2;
-        }
-        .sidebar button.active {
-          background: #1DA1F2;
-          color: white;
-          border-color: #1DA1F2;
-        }
-        .btn-refresh {
-          margin-top: 1rem;
-          background: #1DA1F2 !important;
-          color: white !important;
-          border: none !important;
-        }
-        .btn-refresh:hover {
-          background: #1a8cd8 !important;
-        }
-        .content {
+        .profile-card {
           background: white;
           border-radius: 15px;
           padding: 2rem;
-          min-height: 500px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
-        .loading {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 4rem;
+        .profile-header {
+          text-align: center;
+          padding-bottom: 2rem;
+          border-bottom: 1px solid #e1e8ed;
         }
-        .spinner {
-          width: 50px;
-          height: 50px;
-          border: 4px solid #f7f9fa;
-          border-top-color: #1DA1F2;
+        .profile-image {
+          width: 100px;
+          height: 100px;
           border-radius: 50%;
-          animation: spin 1s linear infinite;
+          margin-bottom: 1rem;
         }
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        .dashboard h1, .unfollowers h1, .not-following-back h1 {
+        .profile-header h1 {
           color: #14171A;
-          margin-bottom: 2rem;
+          margin-bottom: 0.5rem;
+        }
+        .username {
+          color: #657786;
+          font-size: 1.1rem;
+        }
+        .user-id {
+          color: #AAB8C2;
+          font-size: 0.9rem;
+          margin-top: 0.5rem;
+        }
+        .stats-section {
+          margin: 2rem 0;
+        }
+        .stats-section h2 {
+          color: #14171A;
+          margin-bottom: 1.5rem;
         }
         .stats-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1.5rem;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 1rem;
         }
         .stat-card {
           background: linear-gradient(135deg, #1DA1F2 0%, #0d8bd9 100%);
-          padding: 2rem;
-          border-radius: 15px;
+          padding: 1.5rem;
+          border-radius: 10px;
           color: white;
           text-align: center;
         }
         .stat-number {
-          font-size: 2.5rem;
+          font-size: 2rem;
           font-weight: bold;
           margin-bottom: 0.5rem;
         }
         .stat-label {
-          font-size: 1rem;
+          font-size: 0.9rem;
           opacity: 0.9;
         }
-        .user-list {
-          display: grid;
-          gap: 1rem;
-        }
-        .user-card {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          padding: 1rem;
-          background: #f7f9fa;
-          border-radius: 10px;
-          transition: all 0.2s;
-        }
-        .user-card:hover {
-          background: #e1e8ed;
-          transform: translateX(5px);
-        }
-        .user-avatar {
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          background: #1DA1F2;
-          color: white;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 1.5rem;
-          font-weight: bold;
-        }
-        .user-info-card {
-          flex: 1;
-        }
-        .user-name {
-          font-weight: bold;
-          color: #14171A;
-        }
-        .user-username {
-          color: #657786;
-          font-size: 0.9rem;
-        }
-        .unfollowed-date {
-          color: #657786;
-          font-size: 0.8rem;
-          margin-top: 0.25rem;
-        }
-        .empty-state {
+        .no-metrics {
           text-align: center;
           color: #657786;
-          padding: 4rem;
-          font-size: 1.1rem;
+          padding: 2rem;
         }
-        .actions {
-          margin-bottom: 2rem;
+        .info-section {
+          margin: 2rem 0;
         }
-        .btn-danger {
-          background: #e0245e;
-          color: white;
-          border: none;
-          padding: 1rem 2rem;
-          border-radius: 50px;
-          font-size: 1rem;
-          font-weight: bold;
-          cursor: pointer;
-          transition: all 0.3s;
+        .info-section h2 {
+          color: #14171A;
+          margin-bottom: 1rem;
         }
-        .btn-danger:hover {
-          background: #c91e52;
-          transform: translateY(-2px);
-          box-shadow: 0 10px 20px rgba(224, 36, 94, 0.3);
+        .info-item {
+          padding: 0.75rem 0;
+          border-bottom: 1px solid #f7f9fa;
+          color: #14171A;
+        }
+        .info-item strong {
+          color: #657786;
+          margin-right: 0.5rem;
+        }
+        .upgrade-box {
+          margin-top: 2rem;
+          padding: 1.5rem;
+          background: #E8F5FE;
+          border-radius: 10px;
+          border-left: 4px solid #1DA1F2;
+        }
+        .upgrade-box h3 {
+          color: #14171A;
+          margin-bottom: 0.5rem;
+        }
+        .upgrade-box p {
+          color: #657786;
+          margin: 0.5rem 0;
+        }
+        .upgrade-box ul {
+          margin: 0.5rem 0;
+          padding-left: 1.5rem;
+          color: #657786;
         }
       `}</style>
     </div>
