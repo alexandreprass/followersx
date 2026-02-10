@@ -619,7 +619,7 @@ const styles = {
   },
   metricLabel: {
     fontSize: '0.9rem',
-    opacity: 0.8',
+    opacity: 0.8,
   },
   // Card de Última Sincronização
   lastSyncCard: {
