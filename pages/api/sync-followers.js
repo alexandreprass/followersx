@@ -1,87 +1,30 @@
-import { redis } from "@/lib/redis";
-import { fetchFollowersFromTweetAPI } from "@/lib/tweetapi";
+import { TwitterApi } from 'twitter-api-v2';
+import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+  const accessToken = req.cookies.accessToken;
+  if (!accessToken) return res.status(401).json({ error: 'Não autenticado' });
+
+  const client = new TwitterApi(accessToken);
+  const me = await client.v2.me();
+  const userId = me.data.id;
+
+  const currentRes = await client.v2.followers(userId, { max_results: 1000 });
+  const currentIds = currentRes.data?.map(u => u.id) || [];
+
+  const prevStr = await redis.get(`followers:${userId}:current`);
+  const prevIds = prevStr ? JSON.parse(prevStr).map(u => u.id) : [];
+
+  const unfollowers = prevIds.filter(id => !currentIds.includes(id));
+
+  if (unfollowers.length > 0) {
+    const today = new Date().toISOString().split('T')[0];
+    const entries = unfollowers.map(id => JSON.stringify({ id, date: today }));
+    await redis.rpush(`unfollowers:${userId}:${today}`, ...entries);
+    await redis.expire(`unfollowers:${userId}:${today}`, 30 * 24 * 60 * 60); // 30 dias
   }
 
-  const { userId, username } = req.body;
+  await redis.set(`followers:${userId}:current`, JSON.stringify(currentRes.data || []));
 
-  if (!userId || !username) {
-    return res.status(400).json({ error: "userId and username required" });
-  }
-
-  let allFollowers = [];
-  let cursor = null;
-
-  try {
-    // 1️⃣ Buscar seguidores (paginação)
-    do {
-      const data = await fetchFollowersFromTweetAPI(username, cursor);
-      if (data?.data) allFollowers.push(...data.data);
-      cursor = data?.meta?.next_token || null;
-    } while (cursor);
-
-    const currentKey = `followers:${userId}`;
-    const snapshotKey = `followers_snapshot:${userId}`;
-    const unfollowKey = `unfollowers:${userId}`;
-
-    // 2️⃣ Snapshot antigo
-    const oldFollowersRaw = await redis.zrange(currentKey, 0, -1);
-    const oldFollowers = oldFollowersRaw.map(f => JSON.parse(f));
-
-    if (oldFollowersRaw.length > 0) {
-      await redis.del(snapshotKey);
-      await redis.zadd(
-        snapshotKey,
-        oldFollowersRaw.map(f => ({
-          score: Date.now(),
-          member: f,
-        }))
-      );
-    }
-
-    // 3️⃣ Limpa seguidores atuais
-    await redis.del(currentKey);
-
-    // 4️⃣ Salva seguidores novos
-    const now = Date.now();
-    for (const f of allFollowers) {
-      await redis.zadd(currentKey, {
-        score: now,
-        member: JSON.stringify({
-          id: f.id,
-          username: f.username,
-          name: f.name,
-          profile_image_url: f.profile_image_url,
-        }),
-      });
-    }
-
-    // 5️⃣ Detectar unfollowers
-    const newIds = new Set(allFollowers.map(f => f.id));
-
-    const unfollowers = oldFollowers.filter(
-      old => !newIds.has(old.id)
-    );
-
-    for (const u of unfollowers) {
-      await redis.zadd(unfollowKey, {
-        score: Date.now(),
-        member: JSON.stringify({
-          ...u,
-          unfollowed_at: new Date().toISOString(),
-        }),
-      });
-    }
-
-    return res.json({
-      synced: allFollowers.length,
-      unfollowers: unfollowers.length,
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Sync failed" });
-  }
+  res.json({ unfollowers, message: 'Sincronizado' });
 }

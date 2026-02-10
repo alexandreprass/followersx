@@ -1,24 +1,28 @@
-import { redis } from "@/lib/redis";
+import { TwitterApi } from 'twitter-api-v2';
+import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  const accessToken = req.cookies.accessToken;
+  if (!accessToken) return res.status(401).json({ error: 'Não autenticado' });
 
-  // você pode pegar userId da sessão, cookie ou query
-  const { userId } = req.query;
+  const client = new TwitterApi(accessToken);
+  const me = await client.v2.me();
+  const userId = me.data.id;
 
-  if (!userId) {
-    return res.status(400).json({ error: "userId required" });
-  }
+  const followersRes = await client.v2.followers(userId, {
+    max_results: 1000,
+    'user.fields': ['profile_image_url', 'name', 'username'],
+  });
 
-  try {
-    const data = await redis.zrange(`followers:${userId}`, 0, -1);
-    const followers = data.map(item => JSON.parse(item));
+  const followersList = followersRes.data?.map(u => ({
+    id: u.id,
+    username: u.username,
+    name: u.name,
+    profile_image_url: u.profile_image_url || '',
+  })) || [];
 
-    return res.status(200).json({ followers });
-  } catch (err) {
-    console.error("Error loading followers:", err);
-    return res.status(500).json({ error: "Failed to load followers" });
-  }
+  await redis.set(`followers:${userId}:current`, JSON.stringify(followersList));
+  await redis.hset(`user:${userId}`, 'followers_count', followersRes.meta.result_count || 0);
+
+  res.json({ followers: followersList, count: followersRes.meta.result_count || 0 });
 }

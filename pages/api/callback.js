@@ -1,84 +1,41 @@
 import { TwitterApi } from 'twitter-api-v2';
+import { serialize } from 'cookie';
+import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
   const { code, state } = req.query;
-  
-  console.log('Callback received:', { code: !!code, state: !!state });
-  
-  // Recuperar codeVerifier dos cookies
-  const cookies = req.headers.cookie?.split(';').reduce((acc, cookie) => {
-    const [key, value] = cookie.trim().split('=');
-    acc[key] = value;
-    return acc;
-  }, {}) || {};
+  const cookies = req.cookies || {};
 
-  const codeVerifier = cookies.twitter_code_verifier;
-  const savedState = cookies.twitter_state;
+  if (!code || !cookies.codeVerifier || state !== cookies.oauthState) {
+    return res.status(400).send('Erro na autenticação');
+  }
 
-  console.log('Cookies received:', { 
-    hasCodeVerifier: !!codeVerifier, 
-    hasSavedState: !!savedState,
-    stateMatch: state === savedState 
+  const twitter = new TwitterApi({ clientId: process.env.TWITTER_CLIENT_ID });
+
+  const { accessToken, refreshToken, expiresIn } = await twitter.loginWithOAuth2({
+    code: code.toString(),
+    codeVerifier: cookies.codeVerifier,
+    redirectUri: `${process.env.NEXT_PUBLIC_APP_URL}/api/callback`,
   });
 
-  if (!codeVerifier) {
-    console.error('Missing codeVerifier');
-    return res.redirect('/?error=missing_code_verifier');
-  }
+  res.setHeader('Set-Cookie', [
+    serialize('accessToken', accessToken, { path: '/', httpOnly: true, maxAge: expiresIn }),
+    serialize('refreshToken', refreshToken || '', { path: '/', httpOnly: true, maxAge: 31536000 }),
+  ]);
 
-  if (!code) {
-    console.error('Missing authorization code');
-    return res.redirect('/?error=missing_code');
-  }
+  const userClient = new TwitterApi(accessToken);
+  const user = await userClient.v2.me({ 'user.fields': ['profile_image_url', 'public_metrics', 'name', 'username'] });
 
-  if (state !== savedState) {
-    console.error('State mismatch');
-    return res.redirect('/?error=state_mismatch');
-  }
+  const userId = user.data.id;
 
-  try {
-    const client = new TwitterApi({
-      clientId: process.env.TWITTER_CLIENT_ID,
-      clientSecret: process.env.TWITTER_CLIENT_SECRET,
-    });
+  await redis.hset(`user:${userId}`, {
+    name: user.data.name,
+    username: user.data.username,
+    profile_image_url: user.data.profile_image_url || '',
+    followers_count: user.data.public_metrics.followers_count,
+    following_count: user.data.public_metrics.following_count,
+    last_updated: new Date().toISOString(),
+  });
 
-    // Remover barra final da URL se existir
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
-
-    console.log('Attempting OAuth2 login...');
-    
-    const { client: loggedClient, accessToken, refreshToken } = 
-      await client.loginWithOAuth2({ 
-        code, 
-        codeVerifier, 
-        redirectUri: `${baseUrl}/api/callback` 
-      });
-
-    console.log('OAuth2 login successful');
-
-    // Buscar informações do usuário
-    const { data: userObject } = await loggedClient.v2.me({
-      'user.fields': ['public_metrics', 'profile_image_url']
-    });
-
-    console.log('User data retrieved:', userObject.username);
-
-    // Limpar cookies do OAuth
-    const isProduction = process.env.NODE_ENV === 'production';
-    const secureCookie = isProduction ? '; Secure' : '';
-    
-    res.setHeader('Set-Cookie', [
-      `twitter_code_verifier=; HttpOnly; Path=/; Max-Age=0`,
-      `twitter_state=; HttpOnly; Path=/; Max-Age=0`,
-      `twitter_access_token=${accessToken}; HttpOnly; Path=/; Max-Age=7200; SameSite=Lax${secureCookie}`,
-      `twitter_refresh_token=${refreshToken}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax${secureCookie}`,
-      `twitter_user=${encodeURIComponent(JSON.stringify(userObject))}; Path=/; Max-Age=7200; SameSite=Lax${secureCookie}`
-    ]);
-
-    // Redirecionar para a página principal
-    res.redirect('/');
-  } catch (error) {
-    console.error('OAuth error:', error);
-    res.redirect(`/?error=${encodeURIComponent(error.message)}`);
-  }
+  res.redirect('/dashboard');
 }
