@@ -1,6 +1,6 @@
 import { TwitterApi } from 'twitter-api-v2';
 import { serialize } from 'cookie';
-import redis from '../../lib/redis';
+import redis from '../../lib/redis';  // caminho relativo
 
 export default async function handler(req, res) {
   const { code, state } = req.query;

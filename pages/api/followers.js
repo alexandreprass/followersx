@@ -1,5 +1,5 @@
 import { TwitterApi } from 'twitter-api-v2';
-import redis from '../../lib/redis';
+import redis from '../../lib/redis';  // caminho relativo
 
 export default async function handler(req, res) {
   const accessToken = req.cookies.accessToken;
