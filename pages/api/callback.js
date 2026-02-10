@@ -1,4 +1,4 @@
-// pages/api/callback.js - VERSÃO CORRIGIDA com Client Secret
+// pages/api/callback.js - VERSÃO ATUALIZADA - Salva userId no cookie
 import { TwitterApi } from 'twitter-api-v2';
 import { serialize } from 'cookie';
 import redis from '../../lib/redis';
@@ -19,7 +19,6 @@ export default async function handler(req, res) {
   try {
     console.log('[callback] Iniciando troca OAuth2 com Client Secret...');
 
-    // ✅ CORREÇÃO: Twitter EXIGE clientId E clientSecret
     const twitter = new TwitterApi({
       clientId: process.env.TWITTER_CLIENT_ID,
       clientSecret: process.env.TWITTER_CLIENT_SECRET
@@ -33,11 +32,6 @@ export default async function handler(req, res) {
 
     console.log('[callback] Tokens obtidos com sucesso!');
 
-    res.setHeader('Set-Cookie', [
-      serialize('accessToken', accessToken, { path: '/', httpOnly: true, secure: true, sameSite: 'none', maxAge: expiresIn }),
-      serialize('refreshToken', refreshToken || '', { path: '/', httpOnly: true, secure: true, sameSite: 'none', maxAge: 31536000 }),
-    ]);
-
     const userClient = new TwitterApi(accessToken);
     const user = await userClient.v2.me({
       'user.fields': ['profile_image_url', 'public_metrics', 'name', 'username'],
@@ -46,6 +40,7 @@ export default async function handler(req, res) {
     const userId = user.data.id;
     console.log('[callback] Usuário autenticado:', user.data.username, userId);
 
+    // Salva dados do usuário no Redis
     await redis.hset(`user:${userId}`, {
       name: user.data.name,
       username: user.data.username,
@@ -54,6 +49,33 @@ export default async function handler(req, res) {
       following_count: user.data.public_metrics.following_count || 0,
       last_updated: new Date().toISOString(),
     });
+
+    console.log('[callback] Dados salvos no Redis para userId:', userId);
+
+    // Salva cookies incluindo o userId
+    res.setHeader('Set-Cookie', [
+      serialize('accessToken', accessToken, { 
+        path: '/', 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none', 
+        maxAge: expiresIn 
+      }),
+      serialize('refreshToken', refreshToken || '', { 
+        path: '/', 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none', 
+        maxAge: 31536000 
+      }),
+      serialize('userId', userId, { 
+        path: '/', 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none', 
+        maxAge: 31536000 
+      }),
+    ]);
 
     res.redirect('/dashboard');
   } catch (err) {
