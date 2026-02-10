@@ -23,7 +23,8 @@ export default async function handler(req, res) {
     
     console.log(`[Followers API] Redis retornou:`, followersStr ? `${followersStr.length} caracteres` : 'null/vazio');
     
-    if (!followersStr || followersStr.trim() === '') {
+    // Verificar se está vazio (null, undefined, ou string vazia)
+    if (!followersStr || (typeof followersStr === 'string' && followersStr.trim() === '')) {
       console.log('[Followers API] Nenhum seguidor encontrado no Redis. Execute sync-followers primeiro.');
       return res.json({ 
         followers: [], 
@@ -38,7 +39,7 @@ export default async function handler(req, res) {
       console.log(`[Followers API] ${followers.length} seguidores encontrados no Redis`);
     } catch (parseError) {
       console.error('[Followers API] Erro ao fazer parse do JSON:', parseError);
-      console.error('[Followers API] String recebida:', followersStr.substring(0, 100));
+      console.error('[Followers API] String recebida:', followersStr ? followersStr.substring(0, 100) : 'null');
       return res.json({ 
         followers: [], 
         count: 0,
