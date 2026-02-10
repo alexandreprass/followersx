@@ -21,7 +21,9 @@ export default async function handler(req, res) {
     // 2. CORRIGIDO: Buscar seguidores salvos no Redis (pela TweetAPI)
     const followersStr = await redis.get(`followers:${userId}:list`);
     
-    if (!followersStr) {
+    console.log(`[Followers API] Redis retornou:`, followersStr ? `${followersStr.length} caracteres` : 'null/vazio');
+    
+    if (!followersStr || followersStr.trim() === '') {
       console.log('[Followers API] Nenhum seguidor encontrado no Redis. Execute sync-followers primeiro.');
       return res.json({ 
         followers: [], 
@@ -30,8 +32,19 @@ export default async function handler(req, res) {
       });
     }
 
-    const followers = JSON.parse(followersStr);
-    console.log(`[Followers API] ${followers.length} seguidores encontrados no Redis`);
+    let followers;
+    try {
+      followers = JSON.parse(followersStr);
+      console.log(`[Followers API] ${followers.length} seguidores encontrados no Redis`);
+    } catch (parseError) {
+      console.error('[Followers API] Erro ao fazer parse do JSON:', parseError);
+      console.error('[Followers API] String recebida:', followersStr.substring(0, 100));
+      return res.json({ 
+        followers: [], 
+        count: 0,
+        message: 'Erro ao ler dados salvos. Clique em "Atualizar Dados" novamente.'
+      });
+    }
 
     res.json({ 
       followers: followers, 
