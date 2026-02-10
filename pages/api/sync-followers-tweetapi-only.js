@@ -1,7 +1,8 @@
 // pages/api/sync-followers.js
 // VERSÃO SIMPLIFICADA: USA APENAS TWEETAPI (sem Twitter API v2)
 // Remove dependência de Project do Twitter Developer
-import { getAllFollowers, normalizeFollowerData, getUserIdByUsername } from '../../lib/tweetapi-client';
+import { getAllFollowers, normalizeFollowerData } from '../../lib/tweetapi-client';
+import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
@@ -10,41 +11,22 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Método não permitido' });
   }
 
-  // Para essa versão simplificada, vamos pegar o userId do Redis
-  // (foi salvo durante o login/callback)
   try {
     console.log('[SyncFollowers] ========== INÍCIO (VERSÃO TWEETAPI ONLY) ==========');
     
-    // 1. Buscar userId do Redis (salvo durante o callback OAuth)
-    console.log('[SyncFollowers] Passo 1: Buscando userId do Redis...');
+    // 1. Validar autenticação (não faz chamadas à API do Twitter)
+    console.log('[SyncFollowers] Passo 1: Validando autenticação...');
+    const auth = await validateAndRefreshAuth(req, res);
     
-    // Pegar do cookie ou Redis - precisamos identificar o usuário
-    const accessToken = req.cookies.accessToken;
-    if (!accessToken) {
-      return res.status(401).json({ error: 'Não autenticado' });
+    if (!auth.isValid) {
+      return res.status(401).json({ error: auth.error || 'Não autenticado' });
     }
-    
-    // Buscar todos os usuários cadastrados e pegar o mais recente
-    // (melhor seria guardar userId no cookie, mas por enquanto vamos usar essa abordagem)
-    const allKeys = await redis.keys('user:*');
-    console.log(`[SyncFollowers] Keys encontradas no Redis: ${allKeys.length}`);
-    
-    if (allKeys.length === 0) {
-      return res.status(404).json({ 
-        error: 'Usuário não encontrado',
-        message: 'Faça login novamente para sincronizar seus dados.'
-      });
-    }
-    
-    // Pegar o userId da última chave (assumindo que é o usuário atual)
-    // Formato da chave: user:2696187636
-    const lastKey = allKeys[allKeys.length - 1];
-    const userId = lastKey.split(':')[1];
-    
-    console.log(`[SyncFollowers] ✅ UserId obtido do Redis: ${userId}`);
+
+    const userId = auth.userId;
+    console.log(`[SyncFollowers] ✅ Usuário autenticado: ${userId}`);
     
     // Verificar username também
-    const userData = await redis.hgetall(lastKey);
+    const userData = await redis.hgetall(`user:${userId}`);
     console.log(`[SyncFollowers] Dados do usuário: @${userData.username || 'desconhecido'}`);
 
     // 2. Verificar se TWEETAPI_KEY está configurada

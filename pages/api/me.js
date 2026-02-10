@@ -1,63 +1,89 @@
-// pages/api/me.js - Retorna dados do usuário salvos no Redis
+// pages/api/callback.js - VERSÃO ATUALIZADA - Salva userId no cookie
+import { TwitterApi } from 'twitter-api-v2';
+import { serialize } from 'cookie';
 import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
-  const accessToken = req.cookies.accessToken;
-  
-  if (!accessToken) {
-    return res.status(401).json({ error: 'Não autenticado' });
-  }
+  const { code, state } = req.query;
+  const cookies = req.cookies || {};
+
+  console.log('[callback] Query:', req.query);
+  console.log('[callback] Cookies:', Object.keys(cookies));
+  console.log('[callback] state:', state, 'oauthState cookie:', cookies.oauthState);
+  console.log('[callback] codeVerifier presente?', !!cookies.codeVerifier);
+
+  if (!code) return res.status(400).send('Code ausente');
+  if (!cookies.codeVerifier) return res.status(400).send('codeVerifier ausente');
+  if (state !== cookies.oauthState) return res.status(400).send('State mismatch');
 
   try {
-    // Pega o userId do cookie (foi salvo no callback)
-    const userId = req.cookies.userId;
-    
-    if (!userId) {
-      return res.status(400).json({ error: 'UserId não encontrado' });
-    }
+    console.log('[callback] Iniciando troca OAuth2 com Client Secret...');
 
-    // Busca dados do usuário no Redis
-    const userData = await redis.hgetall(`user:${userId}`);
-
-    if (!userData || Object.keys(userData).length === 0) {
-      return res.status(404).json({ error: 'Dados do usuário não encontrados no Redis' });
-    }
-
-    // Busca estatísticas de seguidores
-    const followersData = await redis.get(`followers:${userId}:current`);
-    const followers = followersData ? JSON.parse(followersData) : [];
-
-    // Busca unfollowers dos últimos 30 dias
-    const today = new Date();
-    let totalUnfollowers = 0;
-
-    for (let i = 0; i < 30; i++) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateKey = date.toISOString().split('T')[0];
-      const dayUnfollowers = await redis.lrange(`unfollowers:${userId}:${dateKey}`, 0, -1);
-      totalUnfollowers += dayUnfollowers.length;
-    }
-
-    // Retorna dados completos
-    res.json({
-      user: {
-        id: userId,
-        name: userData.name || '',
-        username: userData.username || '',
-        profile_image_url: userData.profile_image_url || '',
-        followers_count: parseInt(userData.followers_count || 0),
-        following_count: parseInt(userData.following_count || 0),
-        last_updated: userData.last_updated || null,
-      },
-      stats: {
-        followers_count: followers.length,
-        unfollowers_count_30d: totalUnfollowers,
-      }
+    const twitter = new TwitterApi({
+      clientId: process.env.TWITTER_CLIENT_ID,
+      clientSecret: process.env.TWITTER_CLIENT_SECRET
     });
 
+    const { accessToken, refreshToken, expiresIn } = await twitter.loginWithOAuth2({
+      code: code.toString(),
+      codeVerifier: cookies.codeVerifier,
+      redirectUri: `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '')}/api/callback`,
+    });
+
+    console.log('[callback] Tokens obtidos com sucesso!');
+
+    const userClient = new TwitterApi(accessToken);
+    const user = await userClient.v2.me({
+      'user.fields': ['profile_image_url', 'public_metrics', 'name', 'username'],
+    });
+
+    const userId = user.data.id;
+    console.log('[callback] Usuário autenticado:', user.data.username, userId);
+
+    // Salva dados do usuário no Redis
+    await redis.hset(`user:${userId}`, {
+      name: user.data.name,
+      username: user.data.username,
+      profile_image_url: user.data.profile_image_url || '',
+      followers_count: user.data.public_metrics.followers_count || 0,
+      following_count: user.data.public_metrics.following_count || 0,
+      last_updated: new Date().toISOString(),
+    });
+
+    // Salva tempo de expiração do token
+    const expiryTime = Date.now() + (expiresIn * 1000);
+    await redis.set(`token:${userId}:expiry`, expiryTime.toString(), { EX: expiresIn });
+
+    console.log('[callback] Dados salvos no Redis para userId:', userId);
+
+    // Salva cookies incluindo o userId
+    res.setHeader('Set-Cookie', [
+      serialize('accessToken', accessToken, { 
+        path: '/', 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none', 
+        maxAge: expiresIn 
+      }),
+      serialize('refreshToken', refreshToken || '', { 
+        path: '/', 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none', 
+        maxAge: 31536000 
+      }),
+      serialize('userId', userId, { 
+        path: '/', 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none', 
+        maxAge: 31536000 
+      }),
+    ]);
+
+    res.redirect('/dashboard');
   } catch (err) {
-    console.error('[me] Erro ao buscar dados:', err);
-    res.status(500).json({ error: 'Erro ao buscar dados do usuário', details: err.message });
+    console.error('[callback] ERRO DETALHADO:', err.message, err.data || err);
+    res.status(500).send(`Erro na troca de tokens: ${err.message}`);
   }
 }

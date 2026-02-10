@@ -50,6 +50,10 @@ export default async function handler(req, res) {
       last_updated: new Date().toISOString(),
     });
 
+    // Salva tempo de expiração do token
+    const expiryTime = Date.now() + (expiresIn * 1000);
+    await redis.set(`token:${userId}:expiry`, expiryTime.toString(), { EX: expiresIn });
+
     console.log('[callback] Dados salvos no Redis para userId:', userId);
 
     // Salva cookies incluindo o userId
