@@ -1,59 +1,38 @@
 // pages/api/followers.js
-// CORRIGIDO: Agora busca os seguidores do Redis (salvos pela TweetAPI)
-import { TwitterApi } from 'twitter-api-v2';
+// Busca seguidores do Redis (salvos pela sync via TweetAPI)
 import redis from '../../lib/redis';
+import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 
 export default async function handler(req, res) {
-  const accessToken = req.cookies.accessToken;
-  
-  if (!accessToken) {
-    return res.status(401).json({ error: 'Não autenticado' });
-  }
-
   try {
-    // 1. Pegar o userId do usuário autenticado
-    const client = new TwitterApi(accessToken);
-    const { data: me } = await client.v2.me();
-    const userId = me.id;
+    // Valida autenticação
+    const auth = await validateAndRefreshAuth(req, res);
     
+    if (!auth.isValid) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+
+    const userId = auth.userId;
     console.log(`[Followers API] Buscando seguidores do Redis para userId: ${userId}`);
 
-    // 2. CORRIGIDO: Buscar seguidores salvos no Redis (pela TweetAPI)
+    // Busca seguidores salvos no Redis
     const followersStr = await redis.get(`followers:${userId}:list`);
     
-    console.log(`[Followers API] Redis retornou:`, followersStr ? `${followersStr.length} caracteres` : 'null/vazio');
-    
-    // Verificar se está vazio (null, undefined, ou string vazia)
-    if (!followersStr || (typeof followersStr === 'string' && followersStr.trim() === '')) {
-      console.log('[Followers API] Nenhum seguidor encontrado no Redis. Execute sync-followers primeiro.');
-      return res.json({ 
-        followers: [], 
-        count: 0,
-        message: 'Clique em "Atualizar Dados" para buscar seus seguidores pela primeira vez.'
-      });
+    if (!followersStr) {
+      console.log('[Followers API] Nenhum seguidor encontrado no Redis');
+      return res.json({ followers: [] });
     }
 
-    let followers;
-    try {
-      followers = JSON.parse(followersStr);
-      console.log(`[Followers API] ${followers.length} seguidores encontrados no Redis`);
-    } catch (parseError) {
-      console.error('[Followers API] Erro ao fazer parse do JSON:', parseError);
-      console.error('[Followers API] String recebida:', followersStr ? followersStr.substring(0, 100) : 'null');
-      return res.json({ 
-        followers: [], 
-        count: 0,
-        message: 'Erro ao ler dados salvos. Clique em "Atualizar Dados" novamente.'
-      });
-    }
+    const followers = JSON.parse(followersStr);
+    console.log(`[Followers API] ${followers.length} seguidores encontrados`);
 
     res.json({ 
-      followers: followers, 
+      followers,
       count: followers.length 
     });
 
   } catch (error) {
-    console.error('[Followers API] Erro:', error);
+    console.error('[Followers API] Erro:', error.message);
     res.status(500).json({ 
       error: 'Erro ao buscar seguidores',
       details: error.message 
