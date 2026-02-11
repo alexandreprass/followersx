@@ -47,7 +47,11 @@ export default function Dashboard() {
     setError(null);
     
     try {
-      const res = await fetch('/api/sync-followers-paginado');
+      // ✅ CORREÇÃO: Usar POST em vez de GET
+      const res = await fetch('/api/sync-followers-paginado', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
       const data = await res.json();
       
       if (res.ok) {
