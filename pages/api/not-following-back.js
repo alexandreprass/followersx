@@ -4,26 +4,32 @@ import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 import redis from '../../lib/redis';
 
 /**
- * Busca lista de quem o usuário segue via TweetAPI
+ * Busca lista de quem o usuário segue via TweetAPI v2
  */
-async function getFollowingFromTweetAPI(userId, cursor = '-1') {
+async function getFollowingFromTweetAPI(userId, paginationToken = null) {
   const apiKey = process.env.TWEETAPI_KEY;
   
   if (!apiKey) {
     throw new Error('TWEETAPI_KEY não configurada');
   }
 
-  const response = await fetch('https://api.tweetapi.com/api/v1/friends/list', {
+  const url = 'https://api.tweetapi.com/api/v2/users/following';
+  const requestBody = {
+    user_id: userId,
+    max_results: 1000, // Máximo permitido pela v2
+  };
+
+  if (paginationToken) {
+    requestBody.pagination_token = paginationToken;
+  }
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      user_id: userId,
-      count: 200,
-      cursor: cursor,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
@@ -33,8 +39,8 @@ async function getFollowingFromTweetAPI(userId, cursor = '-1') {
 
   const data = await response.json();
   return {
-    users: data.users || [],
-    next_cursor: data.next_cursor_str || data.next_cursor || '0',
+    users: data.data || [],
+    next_token: data.meta?.next_token || null,
   };
 }
 
@@ -43,31 +49,36 @@ async function getFollowingFromTweetAPI(userId, cursor = '-1') {
  */
 async function getAllFollowing(userId, maxPages = 50) {
   let allFollowing = [];
-  let cursor = '-1';
+  let paginationToken = null;
   let pageCount = 0;
 
   console.log(`[NotFollowingBack] Buscando following para userId: ${userId}`);
 
-  while (cursor !== '0' && cursor !== 0 && pageCount < maxPages) {
+  while (pageCount < maxPages) {
     try {
-      console.log(`[NotFollowingBack] Página ${pageCount + 1} - Cursor: ${cursor}`);
+      console.log(`[NotFollowingBack] Página ${pageCount + 1} - Token: ${paginationToken || 'inicial'}`);
       
-      const result = await getFollowingFromTweetAPI(userId, cursor);
+      const result = await getFollowingFromTweetAPI(userId, paginationToken);
       
       if (result.users && result.users.length > 0) {
         allFollowing = [...allFollowing, ...result.users];
         console.log(`[NotFollowingBack] +${result.users.length} following. Total: ${allFollowing.length}`);
       } else {
+        console.log(`[NotFollowingBack] Nenhum usuário retornado. Finalizando.`);
         break;
       }
 
-      cursor = result.next_cursor;
+      paginationToken = result.next_token;
       pageCount++;
 
-      // Delay para evitar rate limit
-      if (cursor !== '0' && cursor !== 0) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // Se não houver próximo token, acabou a paginação
+      if (!paginationToken) {
+        console.log(`[NotFollowingBack] Fim da paginação (sem next_token)`);
+        break;
       }
+
+      // Delay para evitar rate limit
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       console.error(`[NotFollowingBack] Erro na página ${pageCount + 1}:`, error.message);
       break;
@@ -143,10 +154,10 @@ export default async function handler(req, res) {
     // 4. Filtra: você segue, mas não te seguem de volta
     const notFollowingBack = following
       .map(user => ({
-        id: user.id_str || user.id?.toString(),
+        id: user.id || user.id_str,
         name: user.name,
-        username: user.screen_name || user.username,
-        profile_image_url: user.profile_image_url || user.profile_image_url_https,
+        username: user.username,
+        profile_image_url: user.profile_image_url,
       }))
       .filter(user => !followerIds.has(user.id));
 
