@@ -61,7 +61,12 @@ async function getAllFollowersFromTweetAPI_v2(userId) {
       console.log('[TweetAPI v2] 📦 Estrutura da resposta:', Object.keys(data));
       
       // Tenta diferentes estruturas de resposta
-      const followers = data.data?.followers || data.followers || data.data?.users || data.users;
+      // CORREÇÃO: TweetAPI v2 retorna os seguidores diretamente em data (array)
+      const followers = Array.isArray(data.data) ? data.data : 
+                       data.data?.followers || 
+                       data.followers || 
+                       data.data?.users || 
+                       data.users;
       
       if (!followers || !Array.isArray(followers)) {
         console.warn('[TweetAPI v2] ⚠️ Resposta sem array de followers:', JSON.stringify(data).substring(0, 300));
@@ -78,7 +83,9 @@ async function getAllFollowersFromTweetAPI_v2(userId) {
       allFollowers = allFollowers.concat(followers);
       
       // Tenta encontrar o cursor em diferentes locais
-      cursor = data.data?.next_cursor || 
+      // CORREÇÃO: TweetAPI v2 usa pagination.next_cursor
+      cursor = data.pagination?.next_cursor || 
+               data.data?.next_cursor || 
                data.data?.nextCursor || 
                data.next_cursor || 
                data.nextCursor || 
