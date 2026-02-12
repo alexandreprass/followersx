@@ -1,4 +1,4 @@
-// pages/api/callback.js - VERSÃO OTIMIZADA - Sem chamar API do Twitter
+// pages/api/callback.js - VERSÃO CORRIGIDA
 import { TwitterApi } from 'twitter-api-v2';
 import { serialize } from 'cookie';
 import redis from '../../lib/redis';
@@ -33,26 +33,39 @@ export default async function handler(req, res) {
 
     console.log('[callback] Tokens obtidos com sucesso!');
 
-    // IMPORTANTE: Não fazemos mais chamada para v2.me() aqui
-    // O userId será obtido pelo decode do accessToken ou pela primeira sync
-    
-    // Decodifica o token JWT para extrair o userId (método seguro sem API call)
-    const tokenParts = accessToken.split('.');
+    // ✅ CORREÇÃO: Buscar userId via API oficial do Twitter
     let userId = null;
-    
+    let userData = null;
+
     try {
-      // O token JWT do Twitter contém o userId no payload
-      const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
-      userId = payload.sub; // Twitter coloca o userId no campo 'sub' (subject)
-      console.log('[callback] UserId extraído do token:', userId);
+      const client = new TwitterApi(accessToken);
+      const { data: me } = await client.v2.me({
+        'user.fields': ['id', 'name', 'username', 'profile_image_url', 'public_metrics']
+      });
+      
+      userId = me.id;
+      userData = me;
+      
+      console.log('[callback] Dados do usuário obtidos:', {
+        userId: userId,
+        username: me.username,
+        name: me.name
+      });
+
     } catch (e) {
-      console.error('[callback] Erro ao decodificar token, userId será obtido na primeira sync');
+      console.error('[callback] Erro ao buscar dados do usuário:', e);
+      return res.status(500).send('Erro ao buscar dados do usuário: ' + e.message);
     }
 
-    // Se conseguiu extrair userId, salva dados básicos no Redis
-    if (userId) {
+    // Se conseguiu obter userId, salva dados no Redis
+    if (userId && userData) {
       await redis.hset(`user:${userId}`, {
         userId: userId,
+        username: userData.username,
+        name: userData.name,
+        profile_image_url: userData.profile_image_url || '',
+        followers_count: userData.public_metrics?.followers_count?.toString() || '0',
+        following_count: userData.public_metrics?.following_count?.toString() || '0',
         last_login: new Date().toISOString(),
         needs_sync: 'true', // Flag para indicar que precisa sincronizar
       });
@@ -61,10 +74,10 @@ export default async function handler(req, res) {
       const expiryTime = Date.now() + (expiresIn * 1000);
       await redis.set(`token:${userId}:expiry`, expiryTime.toString(), { EX: expiresIn });
 
-      console.log('[callback] Dados básicos salvos no Redis para userId:', userId);
+      console.log('[callback] Dados salvos no Redis para userId:', userId);
     }
 
-    // Salva cookies incluindo o userId (se disponível)
+    // Salva cookies incluindo o userId
     const cookiesToSet = [
       serialize('accessToken', accessToken, { 
         path: '/', 
