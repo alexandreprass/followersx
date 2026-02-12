@@ -1,4 +1,5 @@
-// pages/api/unfollowers.js - VERSÃO CORRIGIDA
+// pages/api/unfollowers.js
+// VERSÃO CORRIGIDA - Melhor tratamento de parsing
 import redis from '../../lib/redis';
 import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 
@@ -24,18 +25,24 @@ export default async function handler(req, res) {
       date.setDate(date.getDate() - i);
       const dateKey = date.toISOString().split('T')[0];
 
-      // ✅ CORREÇÃO: Usar redis.get em vez de lrange
       const dayUnfollowersStr = await redis.get(`unfollowers:${userId}:${dateKey}`);
       
       if (dayUnfollowersStr) {
         try {
-          const dayUnfollowers = JSON.parse(dayUnfollowersStr);
-          if (Array.isArray(dayUnfollowers)) {
-            allUnfollowers = [...allUnfollowers, ...dayUnfollowers];
-            console.log(`[Unfollowers API] ${dateKey}: ${dayUnfollowers.length} unfollowers`);
+          // Converte para string se necessário
+          const str = typeof dayUnfollowersStr === 'string' 
+            ? dayUnfollowersStr 
+            : String(dayUnfollowersStr);
+          
+          if (str.trim() !== '') {
+            const dayUnfollowers = JSON.parse(str);
+            if (Array.isArray(dayUnfollowers)) {
+              allUnfollowers = [...allUnfollowers, ...dayUnfollowers];
+              console.log(`[Unfollowers API] ${dateKey}: ${dayUnfollowers.length} unfollowers`);
+            }
           }
         } catch (parseError) {
-          console.error(`[Unfollowers API] Erro ao parsear dados de ${dateKey}:`, parseError);
+          console.error(`[Unfollowers API] Erro ao parsear dados de ${dateKey}:`, parseError.message);
         }
       }
     }

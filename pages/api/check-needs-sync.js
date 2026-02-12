@@ -1,5 +1,5 @@
 // pages/api/check-needs-sync.js
-// VERSÃO CORRIGIDA - Protege contra JSON.parse de valores vazios
+// VERSÃO CORRIGIDA - Proteção completa contra erros de parsing
 import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 import redis from '../../lib/redis';
 
@@ -24,23 +24,35 @@ export default async function handler(req, res) {
     // Verifica se tem lista de seguidores
     const followersList = await redis.get(`followers:${userId}:list`);
     
-    console.log(`[check-needs-sync] followersList raw:`, followersList ? `${followersList.length} chars` : 'null');
+    console.log(`[check-needs-sync] followersList:`, typeof followersList, followersList ? `${String(followersList).length} chars` : 'null');
     
-    // ✅ CORREÇÃO: Proteger contra JSON.parse de string vazia ou null
+    // ✅ CORREÇÃO COMPLETA: Proteção robusta contra todos os tipos
     let hasFollowers = false;
     let followersCount = 0;
     
-    if (followersList && followersList.trim() !== '') {
+    if (followersList) {
       try {
-        const parsed = JSON.parse(followersList);
-        hasFollowers = Array.isArray(parsed) && parsed.length > 0;
-        followersCount = hasFollowers ? parsed.length : 0;
-        console.log(`[check-needs-sync] Parsed followers: ${followersCount}`);
+        // Converte para string se não for
+        const followersStr = typeof followersList === 'string' 
+          ? followersList 
+          : String(followersList);
+        
+        // Verifica se não está vazio após trim
+        if (followersStr.trim() !== '') {
+          const parsed = JSON.parse(followersStr);
+          hasFollowers = Array.isArray(parsed) && parsed.length > 0;
+          followersCount = hasFollowers ? parsed.length : 0;
+          console.log(`[check-needs-sync] Parsed followers: ${followersCount}`);
+        } else {
+          console.log(`[check-needs-sync] String vazia após trim`);
+        }
       } catch (parseError) {
         console.error(`[check-needs-sync] Erro ao parsear followers:`, parseError.message);
         hasFollowers = false;
         followersCount = 0;
       }
+    } else {
+      console.log(`[check-needs-sync] followersList é null/undefined`);
     }
     
     // Precisa fazer sync se:

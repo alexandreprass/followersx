@@ -1,27 +1,18 @@
 // pages/api/sync-followers-paginado.js
-// VERSÃO ALTERNATIVA - TweetAPI usando endpoint correto
+// VERSÃO CORRIGIDA - Melhor tratamento de erros e logs
 import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 import redis from '../../lib/redis';
 
-/**
- * NOTA IMPORTANTE:
- * Este arquivo contém DUAS implementações da função getAllFollowersFromTweetAPI:
- * 
- * 1. Implementação TweetAPI v2 (ATUAL - linhas 15-110)
- * 2. Implementação TweetAPI v1 (ALTERNATIVA - linhas 112-195)
- * 
- * Comente/descomente a versão apropriada baseado na documentação da sua API key
- */
-
 // ==========================================
-// OPÇÃO 1: TweetAPI v2 (MÉTODO GET)
+// OPÇÃO 1: TweetAPI v2 (MÉTODO GET) - RECOMENDADA
 // ==========================================
-// Use esta se sua chave foi criada para a API v2
-// Endpoint: https://api.tweetapi.com/tw-v2/user/followers
-
 async function getAllFollowersFromTweetAPI_v2(userId) {
   const tweetApiKey = process.env.TWEETAPI_KEY;
   const baseUrl = 'https://api.tweetapi.com/tw-v2';
+  
+  if (!tweetApiKey) {
+    throw new Error('TWEETAPI_KEY não configurada nas variáveis de ambiente');
+  }
   
   let allFollowers = [];
   let cursor = null;
@@ -29,68 +20,103 @@ async function getAllFollowersFromTweetAPI_v2(userId) {
   const maxPages = 100;
   
   console.log(`[TweetAPI v2] Iniciando busca de seguidores para userId: ${userId}`);
+  console.log(`[TweetAPI v2] API Key configurada: ${tweetApiKey.substring(0, 10)}...`);
   
   do {
     pageCount++;
-    console.log(`[TweetAPI v2] Página ${pageCount}${cursor ? ` (cursor: ${cursor.substring(0, 20)}...)` : ''}`);
+    console.log(`[TweetAPI v2] 📄 Página ${pageCount}/${maxPages}${cursor ? ` (cursor: ${cursor.substring(0, 20)}...)` : ' (primeira página)'}`);
     
     const url = cursor 
       ? `${baseUrl}/user/followers?userId=${userId}&cursor=${encodeURIComponent(cursor)}`
       : `${baseUrl}/user/followers?userId=${userId}`;
     
+    console.log(`[TweetAPI v2] 🔗 URL: ${url}`);
+    
     try {
       const response = await fetch(url, {
+        method: 'GET',
         headers: {
           'X-API-Key': tweetApiKey,
           'Content-Type': 'application/json',
         },
       });
       
+      console.log(`[TweetAPI v2] 📥 Status: ${response.status} ${response.statusText}`);
+      
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[TweetAPI v2] Erro HTTP:', response.status, errorText);
+        console.error('[TweetAPI v2] ❌ Erro HTTP:', response.status, errorText);
+        
+        // Se é rate limit, retorna o que conseguiu até agora
+        if (response.status === 429) {
+          console.warn('[TweetAPI v2] ⚠️ Rate limit atingido, retornando dados parciais');
+          break;
+        }
+        
         throw new Error(`TweetAPI error (${response.status}): ${errorText}`);
       }
       
       const data = await response.json();
       
-      console.log('[TweetAPI v2] Estrutura da resposta:', Object.keys(data));
+      console.log('[TweetAPI v2] 📦 Estrutura da resposta:', Object.keys(data));
       
-      const followers = data.data?.followers || data.followers;
+      // Tenta diferentes estruturas de resposta
+      const followers = data.data?.followers || data.followers || data.data?.users || data.users;
       
       if (!followers || !Array.isArray(followers)) {
-        console.warn('[TweetAPI v2] Resposta sem array de followers:', JSON.stringify(data).substring(0, 200));
+        console.warn('[TweetAPI v2] ⚠️ Resposta sem array de followers:', JSON.stringify(data).substring(0, 300));
         break;
       }
       
-      console.log(`[TweetAPI v2] Página ${pageCount}: ${followers.length} seguidores recebidos`);
+      console.log(`[TweetAPI v2] ✅ Página ${pageCount}: ${followers.length} seguidores recebidos`);
+      
+      // Log do primeiro seguidor para debug
+      if (followers.length > 0 && pageCount === 1) {
+        console.log('[TweetAPI v2] 📋 Exemplo do primeiro seguidor:', JSON.stringify(followers[0]));
+      }
       
       allFollowers = allFollowers.concat(followers);
       
-      cursor = data.data?.next_cursor || data.next_cursor || data.nextCursor || null;
+      // Tenta encontrar o cursor em diferentes locais
+      cursor = data.data?.next_cursor || 
+               data.data?.nextCursor || 
+               data.next_cursor || 
+               data.nextCursor || 
+               null;
       
+      console.log(`[TweetAPI v2] 🔄 Próximo cursor:`, cursor ? cursor.substring(0, 30) + '...' : 'null (última página)');
+      
+      // Condições de parada
       if (!cursor || cursor === '0' || cursor === 0 || cursor === '') {
-        console.log('[TweetAPI v2] Última página alcançada');
+        console.log('[TweetAPI v2] ✅ Última página alcançada (cursor vazio)');
         break;
       }
       
       if (followers.length === 0) {
-        console.log('[TweetAPI v2] Página vazia, finalizando');
+        console.log('[TweetAPI v2] ✅ Página vazia, finalizando');
         break;
       }
       
       if (pageCount >= maxPages) {
-        console.warn(`[TweetAPI v2] Limite de ${maxPages} páginas atingido`);
+        console.warn(`[TweetAPI v2] ⚠️ Limite de ${maxPages} páginas atingido`);
         break;
       }
       
+      // Delay entre requisições para evitar rate limit
+      console.log('[TweetAPI v2] ⏳ Aguardando 500ms...');
       await new Promise(resolve => setTimeout(resolve, 500));
       
     } catch (error) {
-      console.error(`[TweetAPI v2] Erro na página ${pageCount}:`, error.message);
+      console.error(`[TweetAPI v2] ❌ Erro na página ${pageCount}:`, error.message);
       
       if (error.message.includes('429') || error.message.includes('rate limit')) {
         console.warn('[TweetAPI v2] Rate limit atingido, retornando dados parciais');
+        break;
+      }
+      
+      // Se já tem alguns seguidores, retorna o que conseguiu
+      if (allFollowers.length > 0) {
+        console.warn(`[TweetAPI v2] Retornando ${allFollowers.length} seguidores coletados antes do erro`);
         break;
       }
       
@@ -99,63 +125,71 @@ async function getAllFollowersFromTweetAPI_v2(userId) {
     
   } while (cursor);
   
-  console.log(`[TweetAPI v2] Busca concluída: ${allFollowers.length} seguidores em ${pageCount} páginas`);
+  console.log(`[TweetAPI v2] 🎉 Busca concluída: ${allFollowers.length} seguidores em ${pageCount} páginas`);
   return allFollowers;
 }
 
 // ==========================================
-// OPÇÃO 2: TweetAPI v1 (MÉTODO POST)
+// OPÇÃO 2: TweetAPI v1 (MÉTODO POST) - ALTERNATIVA
 // ==========================================
-// Use esta se sua chave foi criada para a API v1
-// Endpoint: https://api.tweetapi.com/api/v1/followers/list
-
 async function getAllFollowersFromTweetAPI_v1(userId) {
   const tweetApiKey = process.env.TWEETAPI_KEY;
   const baseUrl = 'https://api.tweetapi.com/api/v1';
   
+  if (!tweetApiKey) {
+    throw new Error('TWEETAPI_KEY não configurada nas variáveis de ambiente');
+  }
+  
   let allFollowers = [];
-  let cursor = '-1'; // v1 usa string "-1" para primeira página
+  let cursor = '-1';
   let pageCount = 0;
   const maxPages = 100;
   
   console.log(`[TweetAPI v1] Iniciando busca de seguidores para userId: ${userId}`);
+  console.log(`[TweetAPI v1] API Key configurada: ${tweetApiKey.substring(0, 10)}...`);
   
-  // v1 usa loop while com cursor != '0'
   while (cursor !== '0' && cursor !== 0 && pageCount < maxPages) {
     pageCount++;
-    console.log(`[TweetAPI v1] Página ${pageCount}/${maxPages} - Cursor: ${cursor}`);
+    console.log(`[TweetAPI v1] 📄 Página ${pageCount}/${maxPages} - Cursor: ${cursor}`);
     
     try {
       const response = await fetch(`${baseUrl}/followers/list`, {
-        method: 'POST', // v1 usa POST
+        method: 'POST',
         headers: {
-          'Authorization': `Bearer ${tweetApiKey}`, // v1 usa Bearer
+          'Authorization': `Bearer ${tweetApiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user_id: userId, // v1 usa user_id no body
-          count: 200, // máximo por página
+          user_id: userId,
+          count: 200,
           cursor: cursor,
         }),
       });
       
+      console.log(`[TweetAPI v1] 📥 Status: ${response.status} ${response.statusText}`);
+      
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[TweetAPI v1] Erro HTTP:', response.status, errorText);
+        console.error('[TweetAPI v1] ❌ Erro HTTP:', response.status, errorText);
+        
+        if (response.status === 429) {
+          console.warn('[TweetAPI v1] ⚠️ Rate limit atingido');
+          break;
+        }
+        
         throw new Error(`TweetAPI error (${response.status}): ${errorText}`);
       }
       
       const data = await response.json();
       
-      // v1 retorna: { users: [...], next_cursor: "...", next_cursor_str: "..." }
       const followers = data.users;
       
       if (!followers || !Array.isArray(followers)) {
-        console.warn('[TweetAPI v1] Resposta sem array de users');
+        console.warn('[TweetAPI v1] ⚠️ Resposta sem array de users');
         break;
       }
       
-      console.log(`[TweetAPI v1] Página ${pageCount}: ${followers.length} seguidores recebidos`);
+      console.log(`[TweetAPI v1] ✅ Página ${pageCount}: ${followers.length} seguidores recebidos`);
       
       if (followers.length === 0) {
         console.log('[TweetAPI v1] Página vazia, finalizando');
@@ -164,22 +198,25 @@ async function getAllFollowersFromTweetAPI_v1(userId) {
       
       allFollowers = allFollowers.concat(followers);
       
-      // v1 retorna next_cursor_str (preferível) ou next_cursor
       cursor = data.next_cursor_str || data.next_cursor?.toString() || '0';
       
-      console.log(`[TweetAPI v1] Próximo cursor: ${cursor}`);
+      console.log(`[TweetAPI v1] 🔄 Próximo cursor: ${cursor}`);
       
-      // Delay entre requisições
       if (cursor !== '0' && cursor !== 0) {
-        console.log('[TweetAPI v1] Aguardando 1 segundo...');
+        console.log('[TweetAPI v1] ⏳ Aguardando 1 segundo...');
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
     } catch (error) {
-      console.error(`[TweetAPI v1] Erro na página ${pageCount}:`, error.message);
+      console.error(`[TweetAPI v1] ❌ Erro na página ${pageCount}:`, error.message);
       
       if (error.message.includes('429') || error.message.includes('rate limit')) {
         console.warn('[TweetAPI v1] Rate limit atingido');
+        break;
+      }
+      
+      if (allFollowers.length > 0) {
+        console.warn(`[TweetAPI v1] Retornando ${allFollowers.length} seguidores coletados antes do erro`);
         break;
       }
       
@@ -187,22 +224,22 @@ async function getAllFollowersFromTweetAPI_v1(userId) {
     }
   }
   
-  console.log(`[TweetAPI v1] Busca concluída: ${allFollowers.length} seguidores em ${pageCount} páginas`);
+  console.log(`[TweetAPI v1] 🎉 Busca concluída: ${allFollowers.length} seguidores em ${pageCount} páginas`);
   return allFollowers;
 }
 
 // ==========================================
 // ESCOLHA A VERSÃO AQUI
 // ==========================================
-// Descomente a linha apropriada para sua API key:
+// ✅ Use v2 se sua chave foi criada após 2024 ou se tiver acesso à v2
+const getAllFollowersFromTweetAPI = getAllFollowersFromTweetAPI_v2;
 
-const getAllFollowersFromTweetAPI = getAllFollowersFromTweetAPI_v2; // ← USE v2
-// const getAllFollowersFromTweetAPI = getAllFollowersFromTweetAPI_v1; // ← USE v1
+// ⚠️ Use v1 se sua chave é antiga ou se v2 não funcionar
+// const getAllFollowersFromTweetAPI = getAllFollowersFromTweetAPI_v1;
 
 // ==========================================
-// RESTO DO CÓDIGO (igual para ambas versões)
+// HANDLER PRINCIPAL
 // ==========================================
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Método não permitido' });
@@ -215,40 +252,60 @@ export default async function handler(req, res) {
     const auth = await validateAndRefreshAuth(req, res);
     
     if (!auth.isValid) {
-      console.error('[SyncFollowers] Autenticação inválida:', auth.error);
+      console.error('[SyncFollowers] ❌ Autenticação inválida:', auth.error);
       return res.status(401).json({ error: auth.error || 'Não autenticado' });
     }
 
     const userId = auth.userId;
-    console.log('[SyncFollowers] UserId autenticado:', userId);
+    console.log('[SyncFollowers] ✅ UserId autenticado:', userId);
 
     // 2. Verificar se TWEETAPI_KEY existe
     if (!process.env.TWEETAPI_KEY) {
-      console.error('[SyncFollowers] TWEETAPI_KEY não configurada!');
+      console.error('[SyncFollowers] ❌ TWEETAPI_KEY não configurada!');
       return res.status(500).json({ 
-        error: 'Configuração inválida: TWEETAPI_KEY não encontrada' 
+        error: 'Configuração inválida: TWEETAPI_KEY não encontrada nas variáveis de ambiente' 
       });
     }
+    
+    console.log('[SyncFollowers] ✅ TWEETAPI_KEY configurada');
 
     // 3. Buscar lista antiga de seguidores (para comparação)
     const oldFollowersStr = await redis.get(`followers:${userId}:list`);
-    const oldFollowers = oldFollowersStr ? JSON.parse(oldFollowersStr) : [];
-    const oldFollowersIds = new Set(oldFollowers.map(f => f.id));
+    let oldFollowers = [];
     
-    console.log(`[SyncFollowers] Seguidores antigos: ${oldFollowers.length}`);
+    if (oldFollowersStr) {
+      try {
+        const str = typeof oldFollowersStr === 'string' ? oldFollowersStr : String(oldFollowersStr);
+        if (str.trim() !== '') {
+          oldFollowers = JSON.parse(str);
+        }
+      } catch (e) {
+        console.warn('[SyncFollowers] ⚠️ Erro ao parsear lista antiga, assumindo vazia:', e.message);
+      }
+    }
+    
+    const oldFollowersIds = new Set(oldFollowers.map(f => f.id));
+    console.log(`[SyncFollowers] 📊 Seguidores antigos: ${oldFollowers.length}`);
 
     // 4. Buscar novos seguidores via TweetAPI
-    console.log('[SyncFollowers] Buscando seguidores via TweetAPI...');
+    console.log('[SyncFollowers] 🔄 Buscando seguidores via TweetAPI...');
     const newFollowers = await getAllFollowersFromTweetAPI(userId);
     
-    // Normalizar IDs (v1 usa id_str, v2 pode usar id ou user_id)
+    if (!newFollowers || newFollowers.length === 0) {
+      console.warn('[SyncFollowers] ⚠️ Nenhum seguidor retornado pela API');
+      return res.status(500).json({ 
+        error: 'Nenhum seguidor retornado pela TweetAPI. Verifique se a chave está correta.' 
+      });
+    }
+    
+    console.log(`[SyncFollowers] 📊 Seguidores novos: ${newFollowers.length}`);
+
+    // 5. Normalizar IDs (compatível com v1 e v2)
     const newFollowersIds = new Set(
       newFollowers.map(f => f.id || f.id_str || f.user_id || f.userId)
     );
-    
-    console.log(`[SyncFollowers] Seguidores novos: ${newFollowers.length}`);
 
-    // 5. Detectar unfollowers (quem estava na lista antiga mas não está na nova)
+    // 6. Detectar unfollowers (quem estava na antiga mas não está na nova)
     const unfollowers = oldFollowers.filter(f => !newFollowersIds.has(f.id));
     
     if (unfollowers.length > 0) {
@@ -267,12 +324,12 @@ export default async function handler(req, res) {
         { EX: 60 * 60 * 24 * 30 } // 30 dias
       );
       
-      console.log(`[SyncFollowers] Unfollowers salvos: unfollowers:${userId}:${today}`);
+      console.log(`[SyncFollowers] ✅ Unfollowers salvos: unfollowers:${userId}:${today}`);
     } else {
       console.log('[SyncFollowers] ✅ Nenhum unfollower detectado');
     }
 
-    // 6. Detectar novos seguidores
+    // 7. Detectar novos seguidores
     const newFollowersCount = Array.from(newFollowersIds).filter(
       id => !oldFollowersIds.has(id)
     ).length;
@@ -281,27 +338,29 @@ export default async function handler(req, res) {
       console.log(`[SyncFollowers] 🎉 ${newFollowersCount} novos seguidores!`);
     }
 
-    // 7. Normalizar dados dos novos seguidores (compatível com v1 e v2)
+    // 8. Normalizar dados dos novos seguidores (compatível com v1 e v2)
     const normalizedFollowers = newFollowers.map(f => ({
-      // IDs
       id: f.id || f.id_str || f.user_id || f.userId,
-      // Username
       username: f.username || f.screen_name || f.userName,
-      // Nome completo
-      name: f.name || f.display_name,
-      // Avatar
-      profile_image_url: f.profile_image_url || f.profile_image_url_https || f.profilePicture || f.profile_pic,
+      name: f.name || f.display_name || f.displayName,
+      profile_image_url: f.profile_image_url || 
+                        f.profile_image_url_https || 
+                        f.profilePicture || 
+                        f.profile_pic ||
+                        f.profileImageUrl,
     }));
+    
+    console.log('[SyncFollowers] 📋 Exemplo de seguidor normalizado:', normalizedFollowers[0]);
 
-    // 8. Salvar lista atualizada no Redis
+    // 9. Salvar lista atualizada no Redis
     await redis.set(
       `followers:${userId}:list`,
       JSON.stringify(normalizedFollowers)
     );
 
-    console.log(`[SyncFollowers] Lista atualizada salva: followers:${userId}:list`);
+    console.log(`[SyncFollowers] ✅ Lista atualizada salva: followers:${userId}:list`);
 
-    // 9. Atualizar dados do usuário
+    // 10. Atualizar dados do usuário
     await redis.hset(`user:${userId}`, {
       followers_count: normalizedFollowers.length.toString(),
       last_sync: new Date().toISOString(),
@@ -321,7 +380,9 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('[SyncFollowers] ❌ ERRO:', error.message);
+    console.error('[SyncFollowers] ❌❌❌ ERRO FATAL ❌❌❌');
+    console.error('[SyncFollowers] Tipo:', error.constructor.name);
+    console.error('[SyncFollowers] Mensagem:', error.message);
     console.error('[SyncFollowers] Stack:', error.stack);
     
     res.status(500).json({ 
