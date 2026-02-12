@@ -1,262 +1,251 @@
+import { useState, useEffect } from "react";
+
+export default function Dashboard() {
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [needsSync, setNeedsSync] = useState(false);
+  const [userData, setUserData] = useState(null);
+  const [followers, setFollowers] = useState([]);
+  const [unfollowers, setUnfollowers] = useState([]);
+  const [notFollowingBack, setNotFollowingBack] = useState([]);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState("followers");
+  const [lastSync, setLastSync] = useState(null);
+
+  useEffect(() => {
+    checkNeedsSync();
+  }, []);
+
+  const checkNeedsSync = async () => {
+    try {
+      const res = await fetch("/api/check-needs-sync");
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+
+      setNeedsSync(data.needsSync);
+      setLastSync(data.lastSync);
+
+      if (data.needsSync) {
+        await startSync();
+      } else {
+        await loadAllData();
+      }
+    } catch {
+      setError("Erro ao verificar sincronização");
+      setLoading(false);
+    }
+  };
+
+  const startSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/sync-followers-paginado", {
+        method: "POST",
+      });
+
+      if (!res.ok) throw new Error();
+
+      setNeedsSync(false);
+      setLastSync(new Date().toISOString());
+      await loadAllData();
+    } catch {
+      setError("Erro ao sincronizar dados");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const analyzeFollowers = async () => {
+    setAnalyzing(true);
+    await startSync();
+    setActiveTab("unfollowers");
+    setAnalyzing(false);
+  };
+
+  const loadAllData = async () => {
+    setLoading(true);
+    try {
+      const [userRes, followersRes, unfollowersRes, notFollowingRes] =
+        await Promise.all([
+          fetch("/api/user-profile"),
+          fetch("/api/followers"),
+          fetch("/api/unfollowers"),
+          fetch("/api/not-following-back"),
+        ]);
+
+      if (userRes.ok) {
+        const user = await userRes.json();
+        setUserData(user.profile);
+      }
+
+      if (followersRes.ok) {
+        const data = await followersRes.json();
+        setFollowers(data.followers || []);
+      }
+
+      if (unfollowersRes.ok) {
+        const data = await unfollowersRes.json();
+        setUnfollowers(data.unfollowers || []);
+      }
+
+      if (notFollowingRes.ok) {
+        const data = await notFollowingRes.json();
+        setNotFollowingBack(data.notFollowingBack || []);
+      }
+    } catch {
+      setError("Erro ao carregar dados");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading || syncing) {
+    return (
+      <div style={styles.center}>
+        <h2>{syncing ? "Sincronizando..." : "Carregando..."}</h2>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={styles.center}>
+        <h2>Erro</h2>
+        <p>{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.container}>
+      <h1 style={styles.title}>Followers Tracker</h1>
+
+      {userData && (
+        <div style={styles.profileBox}>
+          <img
+            src={userData.profile_image_url}
+            alt=""
+            style={styles.avatar}
+          />
+          <div>
+            <strong>{userData.name}</strong>
+            <p>@{userData.username}</p>
+          </div>
+        </div>
+      )}
+
+      <div style={styles.tabs}>
+        <button onClick={() => setActiveTab("followers")}>
+          Seguidores ({followers.length})
+        </button>
+        <button onClick={() => setActiveTab("unfollowers")}>
+          Unfollowers ({unfollowers.length})
+        </button>
+        <button onClick={() => setActiveTab("notFollowing")}>
+          Não seguem ({notFollowingBack.length})
+        </button>
+      </div>
+
+      <div style={styles.list}>
+        {activeTab === "followers" &&
+          followers.map((u) => <UserCard key={u.id} user={u} />)}
+
+        {activeTab === "unfollowers" &&
+          unfollowers.map((u) => <UserCard key={u.id} user={u} />)}
+
+        {activeTab === "notFollowing" &&
+          notFollowingBack.map((u) => <UserCard key={u.id} user={u} />)}
+      </div>
+
+      <div style={styles.actions}>
+        <button onClick={analyzeFollowers}>
+          {analyzing ? "Analisando..." : "Analisar"}
+        </button>
+        <button onClick={startSync}>
+          {syncing ? "Sincronizando..." : "Atualizar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UserCard({ user }) {
+  return (
+    <div style={styles.card}>
+      <img src={user.profile_image_url} alt="" style={styles.smallAvatar} />
+      <div>
+        <strong>@{user.username}</strong>
+        <p>{user.name}</p>
+      </div>
+    </div>
+  );
+}
+
 const styles = {
   container: {
-    minHeight: '100vh',
-    background: 'linear-gradient(135deg, #0f0f0f 0%, #111827 100%)',
-    color: '#fff',
-    padding: '40px 20px',
-    paddingBottom: '120px',
-    fontFamily: 'Inter, system-ui, sans-serif',
+    minHeight: "100vh",
+    background: "#0f172a",
+    color: "white",
+    padding: 40,
+    fontFamily: "system-ui",
   },
-
-  header: {
-    textAlign: 'center',
-    marginBottom: '40px',
+  title: {
+    textAlign: "center",
+    marginBottom: 30,
   },
-
-  userInfo: {
-    marginTop: '30px',
-    background: 'rgba(255,255,255,0.04)',
-    backdropFilter: 'blur(12px)',
-    borderRadius: '20px',
-    padding: '25px',
-    border: '1px solid rgba(255,255,255,0.08)',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+  profileBox: {
+    display: "flex",
+    alignItems: "center",
+    gap: 15,
+    justifyContent: "center",
+    marginBottom: 30,
   },
-
-  userProfile: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '20px',
-    marginBottom: '25px',
-  },
-
   avatar: {
-    width: '75px',
-    height: '75px',
-    borderRadius: '50%',
-    border: '3px solid #1d9bf0',
-    boxShadow: '0 0 20px rgba(29,155,240,0.5)',
+    width: 70,
+    height: 70,
+    borderRadius: "50%",
   },
-
-  userName: {
-    margin: 0,
-    fontSize: '20px',
-  },
-
-  userHandle: {
-    margin: '5px 0 0 0',
-    color: '#9ca3af',
-    fontSize: '14px',
-  },
-
-  stats: {
-    display: 'flex',
-    justifyContent: 'space-around',
-    marginTop: '20px',
-    flexWrap: 'wrap',
-    gap: '20px',
-  },
-
-  statItem: {
-    background: 'rgba(255,255,255,0.03)',
-    padding: '15px 25px',
-    borderRadius: '14px',
-    textAlign: 'center',
-    border: '1px solid rgba(255,255,255,0.05)',
-    transition: 'all 0.2s',
-  },
-
-  lastSync: {
-    marginTop: '20px',
-    color: '#9ca3af',
-    fontSize: '13px',
-  },
-
-  loading: {
-    textAlign: 'center',
-    paddingTop: '150px',
-  },
-
-  spinner: {
-    width: '55px',
-    height: '55px',
-    border: '6px solid rgba(255,255,255,0.1)',
-    borderTop: '6px solid #1d9bf0',
-    borderRadius: '50%',
-    animation: 'spin 1s linear infinite',
-    margin: '0 auto 25px',
-  },
-
-  error: {
-    textAlign: 'center',
-    paddingTop: '120px',
-    color: '#ff6b6b',
-  },
-
   tabs: {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '15px',
-    marginBottom: '35px',
-    flexWrap: 'wrap',
+    display: "flex",
+    gap: 10,
+    justifyContent: "center",
+    marginBottom: 20,
   },
-
-  tab: {
-    padding: '12px 22px',
-    background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    color: '#fff',
-    cursor: 'pointer',
-    borderRadius: '30px',
-    fontSize: '14px',
-    transition: 'all 0.25s ease',
+  list: {
+    maxWidth: 700,
+    margin: "0 auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
   },
-
-  activeTab: {
-    background: '#1d9bf0',
-    boxShadow: '0 0 20px rgba(29,155,240,0.5)',
-    transform: 'translateY(-2px)',
+  card: {
+    display: "flex",
+    gap: 15,
+    background: "#1e293b",
+    padding: 15,
+    borderRadius: 12,
   },
-
-  content: {
-    maxWidth: '850px',
-    margin: '0 auto',
+  smallAvatar: {
+    width: 45,
+    height: 45,
+    borderRadius: "50%",
   },
-
-  listTitle: {
-    marginBottom: '25px',
-    fontSize: '22px',
-    textAlign: 'center',
+  actions: {
+    position: "fixed",
+    bottom: 30,
+    right: 30,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
   },
-
-  userList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px',
-  },
-
-  userCard: {
-    background: 'rgba(255,255,255,0.04)',
-    padding: '18px',
-    borderRadius: '18px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    border: '1px solid rgba(255,255,255,0.06)',
-    transition: 'all 0.25s ease',
-    backdropFilter: 'blur(8px)',
-  },
-
-  userCardInfo: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '15px',
-  },
-
-  userAvatar: {
-    width: '52px',
-    height: '52px',
-    borderRadius: '50%',
-    border: '2px solid rgba(255,255,255,0.1)',
-  },
-
-  userDetails: {
-    flex: 1,
-  },
-
-  userCardName: {
-    display: 'block',
-    fontSize: '16px',
-    marginBottom: '4px',
-  },
-
-  userFullName: {
-    color: '#9ca3af',
-    margin: 0,
-    fontSize: '14px',
-  },
-
-  date: {
-    color: '#9ca3af',
-    fontSize: '12px',
-    display: 'block',
-    marginTop: '6px',
-  },
-
-  unfollowButton: {
-    padding: '9px 16px',
-    background: 'linear-gradient(135deg, #ff4d4d, #dc3545)',
-    color: 'white',
-    border: 'none',
-    borderRadius: '10px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: '600',
-    transition: 'all 0.2s',
-    boxShadow: '0 5px 15px rgba(220,53,69,0.4)',
-  },
-
-  actionButtons: {
-    position: 'fixed',
-    bottom: '30px',
-    right: '30px',
-    display: 'flex',
-    gap: '15px',
-    flexDirection: 'column',
-  },
-
-  analyzeButton: {
-    padding: '16px 28px',
-    background: 'linear-gradient(135deg, #10a37f, #0e8f6f)',
-    color: 'white',
-    border: 'none',
-    borderRadius: '60px',
-    cursor: 'pointer',
-    fontSize: '16px',
-    fontWeight: 'bold',
-    boxShadow: '0 8px 25px rgba(16,163,127,0.5)',
-    transition: 'all 0.25s ease',
-  },
-
-  syncButton: {
-    padding: '16px 28px',
-    background: 'linear-gradient(135deg, #1d9bf0, #0c7bd9)',
-    color: 'white',
-    border: 'none',
-    borderRadius: '60px',
-    cursor: 'pointer',
-    fontSize: '16px',
-    fontWeight: 'bold',
-    boxShadow: '0 8px 25px rgba(29,155,240,0.5)',
-    transition: 'all 0.25s ease',
-  },
-
-  buttonDisabled: {
-    opacity: 0.5,
-    cursor: 'not-allowed',
-  },
-
-  button: {
-    padding: '14px 26px',
-    background: '#1d9bf0',
-    color: 'white',
-    border: 'none',
-    borderRadius: '10px',
-    cursor: 'pointer',
-    fontSize: '16px',
-    marginTop: '20px',
-  },
-
-  emptyState: {
-    textAlign: 'center',
-    padding: '80px 20px',
-    color: '#9ca3af',
-  },
-
-  emptyIcon: {
-    fontSize: '60px',
-    marginBottom: '15px',
+  center: {
+    minHeight: "100vh",
+    background: "#0f172a",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "column",
   },
 };
