@@ -44,12 +44,12 @@ async function getFollowingFromTweetAPI(userId, cursor = null) {
   // Extrai o cursor de paginação (testando todos os campos possíveis)
   const possibleCursors = [
     data.pagination?.nextCursor,
-    data.pagination?.next_cursor,
+    data.pagination?.nextCursor,
     data.pagination?.next,
-    data.pagination?.nextToken,
-    data.pagination?.next_token,
+    data.pagination?.nextCursor,
+    data.pagination?.nextCursor,
     data.nextCursor,
-    data.next_cursor,
+    data.nextCursor,
     data.next,
   ];
 
@@ -198,7 +198,7 @@ export default async function handler(req, res) {
       await redis.set(
         `not-following-back:${userId}`,
         JSON.stringify(notFollowingBack),
-        'EX',
+        'ex',
         3600 // 1 hora
       );
     }

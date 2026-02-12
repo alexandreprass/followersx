@@ -67,10 +67,10 @@ async function getAllFollowersFromTweetAPI_v2(userId) {
       
       if (data.pagination) {
         console.log('[TweetAPI v2]    - Keys em pagination:', Object.keys(data.pagination));
-        console.log('[TweetAPI v2]    - pagination.next_cursor:', data.pagination.next_cursor);
+        console.log('[TweetAPI v2]    - pagination.nextCursor:', data.pagination.nextCursor);
         console.log('[TweetAPI v2]    - pagination.next:', data.pagination.next);
-        console.log('[TweetAPI v2]    - pagination.nextToken:', data.pagination.nextToken);
-        console.log('[TweetAPI v2]    - pagination.next_token:', data.pagination.next_token);
+        console.log('[TweetAPI v2]    - pagination.nextCursor:', data.pagination.nextCursor);
+        console.log('[TweetAPI v2]    - pagination.nextCursor:', data.pagination.nextCursor);
       }
       
       // Log da resposta completa (apenas na primeira página)
@@ -118,15 +118,15 @@ async function getAllFollowersFromTweetAPI_v2(userId) {
       // EXTRAÇÃO DO CURSOR (TENTANDO TODOS OS CAMPOS POSSÍVEIS)
       // ============================================
       const possibleCursors = [
-        data.pagination?.next_cursor,
+        data.pagination?.nextCursor,
         data.pagination?.next,
-        data.pagination?.nextToken,
-        data.pagination?.next_token,
+        data.pagination?.nextCursor,
+        data.pagination?.nextCursor,
         data.pagination?.cursor,
-        data.next_cursor,
+        data.nextCursor,
         data.nextCursor,
         data.next,
-        data.nextToken,
+        data.nextCursor,
         data.cursor,
       ];
       
@@ -282,7 +282,7 @@ export default async function handler(req, res) {
       await redis.set(
         `unfollowers:${userId}:${today}`,
         JSON.stringify(unfollowersWithDate),
-        'EX',
+        'ex',
         60 * 60 * 24 * 30
       );
     }
