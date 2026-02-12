@@ -1,6 +1,6 @@
 // pages/api/check-needs-sync.js
-// Verifica se o usuário precisa fazer sincronização inicial
-import { validateAndRefreshAuth, getUserFromCache } from '../../lib/auth-middleware';
+// VERSÃO CORRIGIDA - Protege contra JSON.parse de valores vazios
+import { validateAndRefreshAuth } from '../../lib/auth-middleware';
 import redis from '../../lib/redis';
 
 export default async function handler(req, res) {
@@ -14,12 +14,34 @@ export default async function handler(req, res) {
 
     const userId = auth.userId;
     
+    console.log(`[check-needs-sync] Verificando sync para userId: ${userId}`);
+    
     // Verifica se tem dados do usuário
     const userData = await redis.hgetall(`user:${userId}`);
     
+    console.log(`[check-needs-sync] userData:`, userData);
+    
     // Verifica se tem lista de seguidores
     const followersList = await redis.get(`followers:${userId}:list`);
-    const hasFollowers = followersList && JSON.parse(followersList).length > 0;
+    
+    console.log(`[check-needs-sync] followersList raw:`, followersList ? `${followersList.length} chars` : 'null');
+    
+    // ✅ CORREÇÃO: Proteger contra JSON.parse de string vazia ou null
+    let hasFollowers = false;
+    let followersCount = 0;
+    
+    if (followersList && followersList.trim() !== '') {
+      try {
+        const parsed = JSON.parse(followersList);
+        hasFollowers = Array.isArray(parsed) && parsed.length > 0;
+        followersCount = hasFollowers ? parsed.length : 0;
+        console.log(`[check-needs-sync] Parsed followers: ${followersCount}`);
+      } catch (parseError) {
+        console.error(`[check-needs-sync] Erro ao parsear followers:`, parseError.message);
+        hasFollowers = false;
+        followersCount = 0;
+      }
+    }
     
     // Precisa fazer sync se:
     // 1. Flag needs_sync está true
@@ -30,15 +52,21 @@ export default async function handler(req, res) {
       !hasFollowers || 
       !userData.last_sync;
     
+    console.log(`[check-needs-sync] Resultado: needsSync=${needsSync}, hasFollowers=${hasFollowers}, lastSync=${userData.last_sync}`);
+    
     res.json({
       needsSync,
       hasFollowers,
       lastSync: userData.last_sync || null,
-      followersCount: hasFollowers ? JSON.parse(followersList).length : 0,
+      followersCount,
     });
     
   } catch (error) {
-    console.error('[check-needs-sync] Erro:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[check-needs-sync] Erro:', error.message);
+    console.error('[check-needs-sync] Stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Erro ao verificar sincronização',
+      details: error.message 
+    });
   }
 }
